@@ -1,0 +1,83 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
+  <channel>
+    <title>kingdon podcast</title>
+    <link>http://example.org/animals-alphabetically</link>
+    <description>helo world</description>
+    <itunes:explicit>no</itunes:explicit>
+    <docs>http://www.rssboard.org/rss-specification</docs>
+    <generator>python-podgen v1.1.0 https://podgen.readthedocs.org</generator>
+    <lastBuildDate>Sat, 18 Nov 2023 18:35:27 +0000</lastBuildDate>
+    <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    <item>
+      <title>Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_0</title>
+      <description><![CDATA[Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_0]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.e665dbbf-7ba1-43b9-bc39-e85ddd3de0e7.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.e665dbbf-7ba1-43b9-bc39-e85ddd3de0e7.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+    <item>
+      <title>Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_1</title>
+      <description><![CDATA[Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_1]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.e6066b2c-4345-4552-b8cb-49adb8120ac0.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.e6066b2c-4345-4552-b8cb-49adb8120ac0.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+    <item>
+      <title>Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_2</title>
+      <description><![CDATA[Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_2]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.34b60478-5f7d-4834-a35b-ccefcc2759a3.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.34b60478-5f7d-4834-a35b-ccefcc2759a3.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+    <item>
+      <title>Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_3</title>
+      <description><![CDATA[Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_3]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.7f7c2867-7ac1-4317-b8e3-55f720461665.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.7f7c2867-7ac1-4317-b8e3-55f720461665.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+    <item>
+      <title>Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_4</title>
+      <description><![CDATA[Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_4]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.73fe4630-f734-45f0-a1f3-344914b2e9b9.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.73fe4630-f734-45f0-a1f3-344914b2e9b9.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+    <item>
+      <title>Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_5</title>
+      <description><![CDATA[Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_5]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.d603c1fb-1de2-4c59-ae91-bd401748acea.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.d603c1fb-1de2-4c59-ae91-bd401748acea.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+    <item>
+      <title>Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_6</title>
+      <description><![CDATA[Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_6]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.cc89ee32-642c-4f16-ad7c-b70f9d18347d.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.cc89ee32-642c-4f16-ad7c-b70f9d18347d.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+    <item>
+      <title>Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_7</title>
+      <description><![CDATA[Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_7]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.63ab3ff2-6ce2-470b-a6d9-11250a58d4e6.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.63ab3ff2-6ce2-470b-a6d9-11250a58d4e6.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+    <item>
+      <title>Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_8</title>
+      <description><![CDATA[Kingdon1984_AgendasAlternativesPublicPolicies_1.txt_8]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.e9602ad1-3b7e-4ac9-96e2-e7285e9eb905.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.e9602ad1-3b7e-4ac9-96e2-e7285e9eb905.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+    <item>
+      <title>How a billionaire-backed network of AI advisers took over Washington - POLITICO.txt_0</title>
+      <description><![CDATA[How a billionaire-backed network of AI advisers took over Washington - POLITICO.txt_0]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.211a823b-f1e1-499e-aa7c-8b011a8983fb.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.211a823b-f1e1-499e-aa7c-8b011a8983fb.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Sat, 18 Nov 2023 18:35:27 +0000</pubDate>
+    </item>
+  </channel>
+</rss>
