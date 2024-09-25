@@ -1,243 +1,138 @@
-#!/opt/anaconda3/envs/prime/bin/python
-
-import pandas as pd
 import os
 import requests
-import re
-import random
-import xmltodict
-import ast
-import nltk
-from podgen import Podcast, Episode, Media
-from time import sleep
-import logging
-import boto3
-from botocore.exceptions import ClientError
-import sys
+import argparse
 from datetime import datetime, timezone
-from pytz import timezone
+from time import sleep
 
-
-
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_BUCKET
+from audio_processing import send_polly_job
+from rss_utils import create_podcast, create_episode, parse_old_rss_file, Episode, Media
+from text_processing import preprocess_text
+from s3_utils import upload_file, delete_file_from_s3  # Update this line
+from logging_utils import logger
 
 def update_rss(update_payload):
-
+    try:
+        logger.info("Starting RSS update process")
         oldrss = grab_old_rss_file()
         df = parse_old_rss_file(oldrss)
         p = create_podcast()
-        if isinstance(df,str) ==True:
+        
+        if isinstance(df, str):
+            logger.warning("No existing episodes found in RSS feed")
             eplist = []
         else:
-            eplist = [create_episode(x, df) for x in df.index]
+            logger.info(f"Found {len(df)} existing episodes in RSS feed")
+            eplist = [create_episode(df, x) for x in df.index]
+        
         p.episodes += eplist
-        for y in update_payload: #LEFT OFF HERE
-            newep = Episode(title= str(y[1]), media=Media(y[0]), summary=y[1], publication_date= y[2])
-            print(str(y[1]))
+        
+        for y in update_payload:
+            newep = Episode(title=y[1], media=Media(y[0]), summary=y[1], publication_date=y[2])
             p.episodes.append(newep)
-            print('ididit', newep)  
-        p.rss_file('/Users/rwm/Desktop/Voxbiblios/voxbiblios.rss')
-
-
-def send_polly_job(text):
-    polly_client = boto3.Session(
-                aws_access_key_id='AKIAU27ONBILE72PPU7E',                  
-    aws_secret_access_key='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',
-    region_name='us-east-1').client('polly')
-    
-
-
-    response = polly_client.start_speech_synthesis_task(VoiceId='Joanna',
-                OutputS3BucketName='vox-biblios',
-                OutputS3KeyPrefix='key',
-                OutputFormat='mp3', 
-                Text=text,
-                Engine='neural')
-    return response
-
-
-def upload_file(file_name, bucket, object_name=None):
-    """Upload a file to an S3 bucket
-
-    :param file_name: File to upload
-    :param bucket: Bucket to upload to
-    :param object_name: S3 object name. If not specified then file_name is used
-    :return: True if file was uploaded, else False
-    """
-
-    # If S3 object_name was not specified, use file_name
-    if object_name is None:
-        object_name = os.path.basename(file_name)
-
-    # Upload the file
-    s3_client = boto3.client('s3')
-    try:
-        response = s3_client.upload_file(file_name, bucket, object_name)
-    except ClientError as e:
-        logging.error(e)
-        return False
-    return True
-
-
-# creates episode with the current system date and time
-
-def create_episode(x, df):
-    try:
-
-        return Episode(
-     title= df.iloc[x]['title'],
-     media=Media(df.iloc[x]['url']),
-     summary=df.iloc[x]['description'],
-    publication_date= df.iloc[x]['pubDate']
-
-   )
-    except:
-        # return episode with default date value of jan 1 2020
-        return Episode(
-     title= df.iloc[x]['title'],
-     media=Media(df.iloc[x]['url']),
-     summary=df.iloc[x]['description'],
-    publication_date= '2020-01-01T00:00:00Z'
-        )
-
-def create_podcast():
-    p = Podcast(
-   name="Vox Biblios",
-   description="it is the vox biblios",
-   website="http://example.org/animals-alphabetically",
-   explicit=False,
-)
-    return p
+            logger.info(f"Added new episode: {y[1]}")
+        
+        p.rss_file('voxbiblios.rss')
+        logger.info("RSS file updated successfully")
+    except Exception as e:
+        logger.error(f"Error updating RSS: {str(e)}", exc_info=True)
 
 def grab_old_rss_file():
-    response = requests.get('https://vox-biblios.s3.amazonaws.com/voxbiblios.rss')
-    return response
-
-def parse_old_rss_file(oldrss):
-    xmlDict = xmltodict.parse(oldrss.text)
     try:
-        
-        df = pd.DataFrame(xmlDict['rss']['channel']['item'])
-        df['url'] = df['enclosure'].apply(lambda x: x['@url'])
-    except: 
-        df = 'df'
-    return df
-
-
-
-def read_source(source):
-    with open(source) as f:
-        lines = f.read()
-    return lines
-
-def write_text(x, title):
-    f = open(title, 'w')
-    f.write(x)
-    f.close()
-    
-def remove_urls(x):
-    x = re.sub(r'http\S+', '', x)
-    x = re.sub(r'www\S+', '', x)
-    return x
-
-def remove_noise(y):
-
-    eprint(len(y))
-    y = y.replace("   ", '. ')
-    y = y.replace("\t", '. ')
-    eprint(len(y))
-    corpus = y
-    sentences = nltk.sent_tokenize(corpus)
-
-    continuer = [s for s in sentences if sentences.count(s) <= 10]
-    dupes = [s for s in sentences if sentences.count(s) > 10]
-    eprint(dupes)
-
-    return (' ').join(continuer)
-
-def detect_long_texts(x):
-    if len(x) > 99000:
-        x = split_long_texts(x,[])
-        [eprint(len(y)) for y in x]
-        return x
-    else:
-        x = [x]
-        return x 
-    
-def split_long_texts(target, processq):
-    
-    a = target[:90000]
-    b = target[90000:]
-    if len(b) > 90000:
-        processq.append(a)
-        split_long_texts(b, processq)
-    else:
-        processq.append(a)
-        processq.append(b)
-    return processq
-        
-def remove_long_numbers(x):
-    print('oldlen before removing long numbers', len(x))
-    new = re.sub(r'\d{7,}', '', x)
-    print('len after removing long numbers', len(new))
-    return new
-
+        logger.info("Fetching old RSS file")
+        response = requests.get('https://vox-biblios.s3.amazonaws.com/voxbiblios.rss')
+        response.raise_for_status()
+        logger.info("Old RSS file fetched successfully")
+        return response
+    except requests.RequestException as e:
+        logger.error(f"Error fetching old RSS file: {str(e)}", exc_info=True)
+        return None
 
 def read_texts_from_folder(folder):
-    files = os.listdir(folder)
-    dict_of_texts = {}
-    for f in files:
-        if f.endswith('.txt'):
-            with open(folder+'/'+f) as f:
-                text = f.read()
-                list_of_split_texts = detect_long_texts(text)
-                list_of_split_texts = [remove_urls(x) for x in list_of_split_texts]
-                list_of_split_texts = [remove_noise(x) for x in list_of_split_texts]
-                list_of_split_texts = [remove_long_numbers(x) for x in list_of_split_texts]
-                dict_of_texts[f.name.split('/')[-1]] = list_of_split_texts
-    return dict_of_texts
-
-
-# function that runs after rss is updated and uploaded that deletes the texts from the folder
-def delete_texts_from_folder(folder):
-    files = os.listdir(folder)
-    for f in files:
-        if f.endswith('.txt'):
-            os.remove(folder+'/'+f)
-    return True
-
-
-
+    try:
+        logger.info(f"Reading texts from folder: {folder}")
+        files = os.listdir(folder)
+        dict_of_texts = {}
+        for f in files:
+            if f.endswith('.txt'):
+                logger.debug(f"Processing file: {f}")
+                with open(os.path.join(folder, f), 'r') as file:
+                    text = file.read()
+                    preprocessed_text = preprocess_text(text)
+                    dict_of_texts[f] = preprocessed_text
+                logger.debug(f"File {f} processed and added to dict_of_texts")
+        logger.info(f"Processed {len(dict_of_texts)} text files")
+        return dict_of_texts
+    except Exception as e:
+        logger.error(f"Error reading texts from folder: {str(e)}", exc_info=True)
+        return {}
 
 def delete_old_texts(folder):
-    files = os.listdir(folder)
-    for f in files:
-        eprint(f)
-        if f.endswith('.txt'):
-            os.remove(folder+'/'+f)
+    try:
+        logger.info(f"Deleting old text files from folder: {folder}")
+        files = os.listdir(folder)
+        deleted_count = 0
+        for f in files:
+            if f.endswith('.txt'):
+                os.remove(os.path.join(folder, f))
+                deleted_count += 1
+                logger.debug(f"Deleted file: {f}")
+        logger.info(f"Deleted {deleted_count} old text files")
+    except Exception as e:
+        logger.error(f"Error deleting old texts: {str(e)}", exc_info=True)
 
-
-def main():
-    dict_of_texts = read_texts_from_folder('/Users/rwm/Desktop/Voxbiblios/')
-    update_payload = []
-    for k,v in dict_of_texts.items():
-        part_counter = 0
-        for x in v:
-            title = k + '_' + str(part_counter)
-            resp = send_polly_job(x)
-            timestamp = datetime.now(timezone('UTC'))
-            sleep(2)
-            update_payload.append((resp['SynthesisTask']['OutputUri'], title, timestamp))
-            part_counter += 1
-    update_rss(update_payload)
-    upload_file('/Users/rwm/Desktop/Voxbiblios/voxbiblios.rss', 'vox-biblios')
-    eprint("got here")
-    delete_old_texts('/Users/rwm/Desktop/Voxbiblios/')
+def main(input_folder, output_file):
+    try:
+        logger.info(f"Starting main processing with input folder: {input_folder} and output file: {output_file}")
         
+        dict_of_texts = read_texts_from_folder(input_folder)
+        update_payload = []
+        
+        for filename, text in dict_of_texts.items():
+            logger.info(f"Sending Polly job for file: {filename}")
+            resp = send_polly_job(text)
+            timestamp = datetime.now(timezone.utc)
+            sleep(2)
+            update_payload.append((resp['SynthesisTask']['OutputUri'], filename, timestamp))
+            logger.debug(f"Polly job completed for file: {filename}")
+        
+        update_rss(update_payload)
+        
+        if output_file:
+            logger.info(f"Uploading RSS file to S3: {output_file}")
+            upload_file(output_file, S3_BUCKET)
+        else:
+            logger.warning("Output file not specified. Skipping S3 upload.")
+        
+        delete_old_texts(input_folder)
+        
+        logger.info("Processing completed successfully")
+    except Exception as e:
+        logger.error(f"An error occurred in main processing: {str(e)}", exc_info=True)
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Vox Biblios: Text-to-Podcast Generator")
+    parser.add_argument('--input', type=str, help='Input folder containing text files')
+    parser.add_argument('--output', type=str, help='Output RSS file path')
+    return parser.parse_args()
 
 if __name__ == "__main__":
-    main()   
+    args = parse_arguments()
+    
+    if not args.input and not args.output:
+        # No arguments provided, use default values
+        input_folder = 'text-q'
+        output_file = 'voxbiblios.rss'
+        logger.info(f"No arguments provided. Using default values: input={input_folder}, output={output_file}")
+    else:
+        # Arguments provided, use them
+        input_folder = args.input
+        output_file = args.output
+        logger.info(f"Starting Vox Biblios with arguments: input={input_folder}, output={output_file}")
+        
+        if not input_folder or not output_file:
+            logger.error("Both input and output arguments are required when providing custom values.")
+            exit(1)
+    
+    main(input_folder, output_file)
 
-
- 
