@@ -7,8 +7,8 @@ def create_podcast():
     logger.info("Creating new podcast object")
     podcast = Podcast(
         name="Vox Biblios",
-        description="Your personal text-to-podcast generator",
-        website="http://example.org/vox-biblios",
+        description="I speak with the voices of all the words I've seen.",
+        website="disinfo-policy.org",
         explicit=False,
     )
     podcast.image = "https://s3.us-east-1.amazonaws.com/vox-biblios/a91a07d7-f634-4fa6-ae03-c2ff1764a07b_ryan__dont_not_return_without_me_lattice_of_shadow_summer_morning_paint_the_concept_in_the_shimmering_air.png"
