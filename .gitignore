@@ -3,3 +3,7 @@ __pycache__/audio_processing.cpython-37.pyc
 *.pyc
 *.log
 text-q/*
+*.png
+.DS_Store
+.DS_Store
+.DS_Store
