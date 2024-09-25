@@ -15,7 +15,7 @@ import boto3
 from botocore.exceptions import ClientError
 import sys
 from datetime import datetime, timezone
-
+from pytz import timezone
 
 
 
@@ -33,7 +33,7 @@ def update_rss(update_payload):
             eplist = [create_episode(x, df) for x in df.index]
         p.episodes += eplist
         for y in update_payload: #LEFT OFF HERE
-            newep = Episode(title= str(y[1]), media=Media(y[0]), summary=y[1], publication_date= datetime.now(timezone.utc))
+            newep = Episode(title= str(y[1]), media=Media(y[0]), summary=y[1], publication_date= y[2])
             print(str(y[1]))
             p.episodes.append(newep)
             print('ididit', newep)  
@@ -226,8 +226,9 @@ def main():
         for x in v:
             title = k + '_' + str(part_counter)
             resp = send_polly_job(x)
+            timestamp = datetime.now(timezone('UTC'))
             sleep(2)
-            update_payload.append((resp['SynthesisTask']['OutputUri'], title))
+            update_payload.append((resp['SynthesisTask']['OutputUri'], title, timestamp))
             part_counter += 1
     update_rss(update_payload)
     upload_file('/Users/rwm/Desktop/Voxbiblios/voxbiblios.rss', 'vox-biblios')
