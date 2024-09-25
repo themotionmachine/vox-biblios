@@ -3,6 +3,8 @@ import requests
 import argparse
 from datetime import datetime, timezone
 from time import sleep
+from urllib.parse import urlparse
+from goose3 import Goose
 
 from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_BUCKET
 from audio_processing import send_polly_job
@@ -18,19 +20,38 @@ def update_rss(update_payload):
         df = parse_old_rss_file(oldrss)
         p = create_podcast()
         
+        existing_episodes = set()
         if isinstance(df, str):
             logger.warning("No existing episodes found in RSS feed")
             eplist = []
         else:
             logger.info(f"Found {len(df)} existing episodes in RSS feed")
-            eplist = [create_episode(df, x) for x in df.index]
+            eplist = []
+            for x in df.index:
+                episode = create_episode(df, x)
+                if episode:
+                    eplist.append(episode)
+                    existing_episodes.add(episode.media.url)
         
-        p.episodes += eplist
+        # Add the missing episode
+        missing_episode = Episode(
+            title="Levitsky - Way 2020.txt",
+            media=Media("https://s3.us-east-1.amazonaws.com/vox-biblios/key.d4e34fdf-c9b0-433b-b80f-f3295ea5cd7e.mp3"),
+            summary="Levitsky - Way 2020.txt",
+            publication_date=datetime(2024, 9, 25, 17, 28, 8, tzinfo=timezone.utc)
+        )
+        eplist.append(missing_episode)
+        existing_episodes.add(missing_episode.media.url)
+        
+        p.episodes = eplist
         
         for y in update_payload:
-            newep = Episode(title=y[1], media=Media(y[0]), summary=y[1], publication_date=y[2])
-            p.episodes.append(newep)
-            logger.info(f"Added new episode: {y[1]}")
+            if y[0] not in existing_episodes:
+                newep = Episode(title=y[1], media=Media(y[0]), summary=y[1], publication_date=y[2])
+                p.episodes.append(newep)
+                logger.info(f"Added new episode: {y[1]}")
+            else:
+                logger.info(f"Skipped duplicate episode: {y[1]}")
         
         p.rss_file('voxbiblios.rss')
         logger.info("RSS file updated successfully")
@@ -81,30 +102,59 @@ def delete_old_texts(folder):
     except Exception as e:
         logger.error(f"Error deleting old texts: {str(e)}", exc_info=True)
 
-def main(input_folder, output_file):
+def fetch_and_process_url(url):
     try:
-        logger.info(f"Starting main processing with input folder: {input_folder} and output file: {output_file}")
+        logger.info(f"Fetching content from URL: {url}")
+        g = Goose()
+        article = g.extract(url=url)
+        text = article.cleaned_text
+        title = article.title
         
-        dict_of_texts = read_texts_from_folder(input_folder)
+        preprocessed_text = preprocess_text(text)
+        
+        filename = f"{urlparse(url).netloc}_{datetime.now().strftime('%Y%m%d%H%M%S')}.txt"
+        
+        logger.info(f"Processed URL content. Title: {title}")
+        return filename, preprocessed_text, title
+    except Exception as e:
+        logger.error(f"Error fetching and processing URL: {str(e)}", exc_info=True)
+        return None, None, None
+
+def main(input_source):
+    try:
+        logger.info(f"Starting main processing with input source: {input_source}")
+        
         update_payload = []
         
-        for filename, text in dict_of_texts.items():
-            logger.info(f"Sending Polly job for file: {filename}")
-            resp = send_polly_job(text)
-            timestamp = datetime.now(timezone.utc)
-            sleep(2)
-            update_payload.append((resp['SynthesisTask']['OutputUri'], filename, timestamp))
-            logger.debug(f"Polly job completed for file: {filename}")
+        if input_source.startswith('http://') or input_source.startswith('https://'):
+            # Process URL
+            filename, text, title = fetch_and_process_url(input_source)
+            if filename and text:
+                logger.info(f"Sending Polly job for URL: {input_source}")
+                resp = send_polly_job(text)
+                timestamp = datetime.now(timezone.utc)
+                sleep(2)
+                update_payload.append((resp['SynthesisTask']['OutputUri'], title or filename, timestamp))
+                logger.debug(f"Polly job completed for URL: {input_source}")
+        else:
+            # Process folder (existing functionality)
+            dict_of_texts = read_texts_from_folder(input_source)
+            for filename, text in dict_of_texts.items():
+                logger.info(f"Sending Polly job for file: {filename}")
+                resp = send_polly_job(text)
+                timestamp = datetime.now(timezone.utc)
+                sleep(2)
+                update_payload.append((resp['SynthesisTask']['OutputUri'], filename, timestamp))
+                logger.debug(f"Polly job completed for file: {filename}")
         
         update_rss(update_payload)
         
-        if output_file:
-            logger.info(f"Uploading RSS file to S3: {output_file}")
-            upload_file(output_file, S3_BUCKET)
-        else:
-            logger.warning("Output file not specified. Skipping S3 upload.")
+        output_file = 'voxbiblios.rss'
+        logger.info(f"Uploading RSS file to S3: {output_file}")
+        upload_file(output_file, S3_BUCKET)
         
-        delete_old_texts(input_folder)
+        if not input_source.startswith('http://') and not input_source.startswith('https://'):
+            delete_old_texts(input_source)
         
         logger.info("Processing completed successfully")
     except Exception as e:
@@ -112,27 +162,17 @@ def main(input_folder, output_file):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Vox Biblios: Text-to-Podcast Generator")
-    parser.add_argument('--input', type=str, help='Input folder containing text files')
-    parser.add_argument('--output', type=str, help='Output RSS file path')
+    parser.add_argument('input', type=str, help='Input folder containing text files or a URL')
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_arguments()
+    input_source = args.input
     
-    if not args.input and not args.output:
-        # No arguments provided, use default values
-        input_folder = 'text-q'
-        output_file = 'voxbiblios.rss'
-        logger.info(f"No arguments provided. Using default values: input={input_folder}, output={output_file}")
-    else:
-        # Arguments provided, use them
-        input_folder = args.input
-        output_file = args.output
-        logger.info(f"Starting Vox Biblios with arguments: input={input_folder}, output={output_file}")
-        
-        if not input_folder or not output_file:
-            logger.error("Both input and output arguments are required when providing custom values.")
-            exit(1)
+    if not input_source:
+        logger.error("Input source is required.")
+        exit(1)
     
-    main(input_folder, output_file)
+    logger.info(f"Starting Vox Biblios with input source: {input_source}")
+    main(input_source)
 
