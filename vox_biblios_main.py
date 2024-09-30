@@ -9,7 +9,7 @@ from goose3 import Goose
 from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_BUCKET
 from audio_processing import send_polly_job
 from rss_utils import create_podcast, create_episode, parse_old_rss_file, Episode, Media
-from text_processing import preprocess_text
+from text_processing import preprocess_text, chunk_text  # Add this import
 from s3_utils import upload_file, delete_file_from_s3  # Update this line
 from logging_utils import logger
 
@@ -127,25 +127,39 @@ def main(input_source):
         update_payload = []
         
         if input_source.startswith('http://') or input_source.startswith('https://'):
-            # Process URL
+            # Process URL (keep this part as is)
             filename, text, title = fetch_and_process_url(input_source)
             if filename and text:
                 logger.info(f"Sending Polly job for URL: {input_source}")
-                resp = send_polly_job(text)
-                timestamp = datetime.now(timezone.utc)
-                sleep(2)
-                update_payload.append((resp['SynthesisTask']['OutputUri'], title or filename, timestamp))
-                logger.debug(f"Polly job completed for URL: {input_source}")
+                chunks = chunk_text(text)
+                for i, chunk in enumerate(chunks):
+                    resp = send_polly_job(chunk)
+                    if resp:
+                        timestamp = datetime.now(timezone.utc)
+                        sleep(2)
+                        chunk_title = f"{title or filename} (Part {i+1})"
+                        update_payload.append((resp['SynthesisTask']['OutputUri'], chunk_title, timestamp))
+                        logger.debug(f"Polly job completed for URL chunk {i+1}: {input_source}")
+                    else:
+                        logger.error(f"Failed to process chunk {i+1} for URL: {input_source}")
         else:
-            # Process folder (existing functionality)
+            # Process folder
             dict_of_texts = read_texts_from_folder(input_source)
             for filename, text in dict_of_texts.items():
-                logger.info(f"Sending Polly job for file: {filename}")
-                resp = send_polly_job(text)
-                timestamp = datetime.now(timezone.utc)
-                sleep(2)
-                update_payload.append((resp['SynthesisTask']['OutputUri'], filename, timestamp))
-                logger.debug(f"Polly job completed for file: {filename}")
+                logger.info(f"Processing file: {filename} (length: {len(text)} characters)")
+                chunks = chunk_text(text)
+                logger.info(f"File {filename} split into {len(chunks)} chunks")
+                for i, chunk in enumerate(chunks):
+                    logger.info(f"Sending Polly job for {filename} chunk {i+1}/{len(chunks)} (length: {len(chunk)} characters)")
+                    resp = send_polly_job(chunk)
+                    if resp:
+                        timestamp = datetime.now(timezone.utc)
+                        sleep(2)
+                        chunk_title = f"{filename} (Part {i+1})" if len(chunks) > 1 else filename
+                        update_payload.append((resp['SynthesisTask']['OutputUri'], chunk_title, timestamp))
+                        logger.info(f"Polly job completed for {filename} chunk {i+1}/{len(chunks)}")
+                    else:
+                        logger.error(f"Failed to process {filename} chunk {i+1}/{len(chunks)}")
         
         update_rss(update_payload)
         
@@ -162,7 +176,7 @@ def main(input_source):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Vox Biblios: Text-to-Podcast Generator")
-    parser.add_argument('input', type=str, help='Input folder containing text files or a URL')
+    parser.add_argument('input', type=str, nargs='?', default='text-q', help='Input folder containing text files or a URL')
     return parser.parse_args()
 
 if __name__ == "__main__":

@@ -28,3 +28,26 @@ def remove_noise(text):
 def remove_long_numbers(text):
     logger.debug("Removing long numbers from text")
     return re.sub(r'\d{7,}', '', text)
+
+def chunk_text(text, max_chars=99000):  # Set to 99000 to be safe
+    logger.info(f"Chunking text of length {len(text)} characters")
+    chunks = []
+    current_chunk = ""
+    sentences = sent_tokenize(text)
+    
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) < max_chars:
+            current_chunk += sentence + ' '
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = sentence + ' '
+    
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    
+    logger.info(f"Created {len(chunks)} chunks")
+    for i, chunk in enumerate(chunks):
+        logger.debug(f"Chunk {i+1} length: {len(chunk)} characters")
+    
+    return chunks
