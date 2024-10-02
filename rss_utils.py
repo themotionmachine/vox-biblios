@@ -2,12 +2,13 @@ from podgen import Podcast, Episode, Media
 import pandas as pd
 import xmltodict
 from logging_utils import logger
+from cost_estimation import estimate_monthly_cost
 
-def create_podcast():
+def create_podcast(cost_estimate):
     logger.info("Creating new podcast object")
     podcast = Podcast(
         name="Vox Biblios",
-        description="I speak with the voices of all the words I've seen.",
+        description=f"{cost_estimate}\n\nI speak with the voices of all the words I've seen.",
         website="disinfo-policy.org",
         explicit=False,
     )

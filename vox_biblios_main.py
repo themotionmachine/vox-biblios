@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 from time import sleep
 from urllib.parse import urlparse
 from goose3 import Goose
+import time
+import sys
+import itertools
+import threading
 
 from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_BUCKET
 from audio_processing import send_polly_job
@@ -12,13 +16,41 @@ from rss_utils import create_podcast, create_episode, parse_old_rss_file, Episod
 from text_processing import preprocess_text, chunk_text  # Add this import
 from s3_utils import upload_file, delete_file_from_s3  # Update this line
 from logging_utils import logger
+from cost_estimation import estimate_monthly_cost
+
+def animate_soundwave():
+    soundwave = [
+        "▁▂▃▄▅▆▇█▇▆▅▄▃▂▁",
+        "▂▃▄▅▆▇█▇▆▅▄▃▂▁▂",
+        "▃▄▅▆▇█▇▆▅▄▃▂▁▂▃",
+        "▄▅▆▇█▇▆▅▄▃▂▁▂▃▄",
+        "▅▆▇█▇▆▅▄▃▂▁▂▃▄▅",
+        "▆▇█▇▆▅▄▃▂▁▂▃▄▅▆",
+        "▇█▇▆▅▄▃▂▁▂▃▄▅▆▇",
+        "█▇▆▅▄▃▂▁▂▃▄▅▆▇█"
+    ]
+    
+    while not animation_stop_event.is_set():
+        for frame in itertools.cycle(soundwave):
+            if animation_stop_event.is_set():
+                break
+            sys.stdout.write('\r')
+            sys.stdout.write(f"Vox Biblios Processing: {frame}")
+            sys.stdout.flush()
+            time.sleep(0.1)
+    
+    sys.stdout.write('\r')
+    sys.stdout.write(' ' * 30)  # Clear the animation line
+    sys.stdout.write('\r')
+    sys.stdout.flush()
 
 def update_rss(update_payload):
     try:
         logger.info("Starting RSS update process")
         oldrss = grab_old_rss_file()
         df = parse_old_rss_file(oldrss)
-        p = create_podcast()
+        cost_estimate = estimate_monthly_cost()
+        p = create_podcast(cost_estimate)
         
         existing_episodes = set()
         if isinstance(df, str):
@@ -177,6 +209,7 @@ def main(input_source):
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Vox Biblios: Text-to-Podcast Generator")
     parser.add_argument('input', type=str, nargs='?', default='text-q', help='Input folder containing text files or a URL')
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -187,6 +220,13 @@ if __name__ == "__main__":
         logger.error("Input source is required.")
         exit(1)
     
+    global animation_stop_event
+    animation_stop_event = threading.Event()
+
+    if not args.verbose:
+        animation_thread = threading.Thread(target=animate_soundwave)
+        animation_thread.start()
+
     logger.info(f"Starting Vox Biblios with input source: {input_source}")
     main(input_source)
 

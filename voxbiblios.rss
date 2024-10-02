@@ -3,12 +3,14 @@
   <channel>
     <title>Vox Biblios</title>
     <link>disinfo-policy.org</link>
-    <description>I speak with the voices of all the words I've seen.</description>
+    <description>Estimated AWS cost for the last 30 days: $7.94
+
+I speak with the voices of all the words I've seen.</description>
     <itunes:explicit>no</itunes:explicit>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-podgen v1.1.0 https://podgen.readthedocs.org</generator>
-    <lastBuildDate>Mon, 30 Sep 2024 15:58:23 +0000</lastBuildDate>
-    <pubDate>Mon, 30 Sep 2024 15:58:21 +0000</pubDate>
+    <lastBuildDate>Wed, 02 Oct 2024 01:32:47 +0000</lastBuildDate>
+    <pubDate>Wed, 02 Oct 2024 01:32:44 +0000</pubDate>
     <itunes:image href="https://s3.us-east-1.amazonaws.com/vox-biblios/a91a07d7-f634-4fa6-ae03-c2ff1764a07b_ryan__dont_not_return_without_me_lattice_of_shadow_summer_morning_paint_the_concept_in_the_shimmering_air.png"/>
     <item>
       <title>Levitsky - Way 2020.txt</title>
@@ -58,6 +60,34 @@
       <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.4e4bdcc2-7249-4a7f-9f79-a7c3bf916505.mp3</guid>
       <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.4e4bdcc2-7249-4a7f-9f79-a7c3bf916505.mp3" length="0" type="audio/mpeg"/>
       <pubDate>Mon, 30 Sep 2024 15:58:21 +0000</pubDate>
+    </item>
+    <item>
+      <title>Levitsky - Way 2020.txt</title>
+      <description><![CDATA[Levitsky - Way 2020.txt]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.d4e34fdf-c9b0-433b-b80f-f3295ea5cd7e.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.d4e34fdf-c9b0-433b-b80f-f3295ea5cd7e.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Wed, 25 Sep 2024 17:28:08 +0000</pubDate>
+    </item>
+    <item>
+      <title>Who really won when Bergson and Einstein debated time? | Essays (Part 1)</title>
+      <description><![CDATA[Who really won when Bergson and Einstein debated time? | Essays (Part 1)]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.65bc08ac-5b06-4c30-9243-f5f324ba8a1f.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.65bc08ac-5b06-4c30-9243-f5f324ba8a1f.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Wed, 02 Oct 2024 01:18:43 +0000</pubDate>
+    </item>
+    <item>
+      <title>Levitsky - Way 2020.txt</title>
+      <description><![CDATA[Levitsky - Way 2020.txt]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.d4e34fdf-c9b0-433b-b80f-f3295ea5cd7e.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.d4e34fdf-c9b0-433b-b80f-f3295ea5cd7e.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Wed, 25 Sep 2024 17:28:08 +0000</pubDate>
+    </item>
+    <item>
+      <title>Nietzsche’s ideas about morality were shaped by philology | Essays (Part 1)</title>
+      <description><![CDATA[Nietzsche’s ideas about morality were shaped by philology | Essays (Part 1)]]></description>
+      <guid isPermaLink="false">https://s3.us-east-1.amazonaws.com/vox-biblios/key.2760d1d6-4da8-4376-912d-16bf98091d53.mp3</guid>
+      <enclosure url="https://s3.us-east-1.amazonaws.com/vox-biblios/key.2760d1d6-4da8-4376-912d-16bf98091d53.mp3" length="0" type="audio/mpeg"/>
+      <pubDate>Wed, 02 Oct 2024 01:32:44 +0000</pubDate>
     </item>
   </channel>
 </rss>
