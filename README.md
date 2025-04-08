@@ -98,39 +98,7 @@ https://s3.{region}.amazonaws.com/{bucket}/{rss_filename}
 
 This URL can be added to podcast players to subscribe to your generated podcast.
 
-## Development
 
-### Setting Up Development Environment
-
-```bash
-# Clone the repository
-git clone https://github.com/username/vox-biblios.git
-cd vox-biblios
-
-# Install development dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-```
-
-### Code Quality
-
-Maintain code quality with:
-
-```bash
-# Format code
-black vox_biblios tests
-
-# Sort imports
-isort vox_biblios tests
-
-# Type checking
-mypy vox_biblios
-
-# Linting
-flake8 vox_biblios tests
-```
 
 ## Architecture
 

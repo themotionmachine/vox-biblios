@@ -31,7 +31,7 @@ class AppConfig:
     log_level: int = logging.INFO
     log_file: str = "vox_biblios.log"
     log_dir: str = "logs"
-    chunk_size: int = 99000  # Character limit for Polly
+    chunk_size: int = 90000  # Character limit for Polly (reduced from 99000 for safety)
     rss_filename: str = "voxbiblios.rss"
     podcast_name: str = "Vox Biblios"
     podcast_description: str = "I speak with the voices of all the words I've seen."
@@ -74,7 +74,7 @@ class Config:
             log_level=log_level,
             log_file=os.environ.get("LOG_FILE", "vox_biblios.log"),
             log_dir=os.environ.get("LOG_DIR", "logs"),
-            chunk_size=int(os.environ.get("CHUNK_SIZE", "99000")),
+            chunk_size=int(os.environ.get("CHUNK_SIZE", "90000")),
             rss_filename=os.environ.get("RSS_FILENAME", "voxbiblios.rss"),
             podcast_name=os.environ.get("PODCAST_NAME", "Vox Biblios"),
             podcast_description=os.environ.get("PODCAST_DESCRIPTION", 

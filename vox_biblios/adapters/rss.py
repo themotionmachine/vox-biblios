@@ -2,7 +2,7 @@
 RSS feed generation and management for podcast.
 """
 from typing import List, Dict, Any, Optional, Union
-from datetime import datetime
+from datetime import datetime, timezone
 import xmltodict
 import requests
 from urllib.parse import urlparse
@@ -108,12 +108,20 @@ class PodcastRSSManager:
         """
         logger.debug(f"Creating episode: {title}")
         
+        # Ensure publication date has timezone info
+        if publication_date is None:
+            publication_date = datetime.now()
+        
+        if publication_date.tzinfo is None:
+            # Add UTC timezone if none exists
+            publication_date = publication_date.replace(tzinfo=timezone.utc)
+        
         # Create episode
         episode = Episode(
             title=title,
             media=Media(audio_url),
             summary=description or title,
-            publication_date=publication_date or datetime.now()
+            publication_date=publication_date
         )
         
         return episode

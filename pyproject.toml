@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vox-biblios"
+version = "0.1.0"
+description = "Text-to-Podcast Generator"
+requires-python = ">=3.10"
+dependencies = [
+    "colorama",
+]
+
+[project.scripts]
+vox-biblios = "vox_biblios.cli:main" 

@@ -4,7 +4,7 @@ Core podcast manager for Vox Biblios.
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 
 from vox_biblios.config import config
@@ -81,7 +81,7 @@ class PodcastManager:
                         output_uri = response['SynthesisTask']['OutputUri']
                         
                         # Create episode data
-                        timestamp = datetime.now()
+                        timestamp = datetime.now(timezone.utc)
                         
                         episode_data = {
                             'title': chunk_title,
@@ -159,7 +159,7 @@ class PodcastManager:
                     output_uri = response['SynthesisTask']['OutputUri']
                     
                     # Create episode data
-                    timestamp = datetime.now()
+                    timestamp = datetime.now(timezone.utc)
                     
                     episode_data = {
                         'title': chunk_title,

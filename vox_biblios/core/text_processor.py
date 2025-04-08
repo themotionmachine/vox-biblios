@@ -79,6 +79,12 @@ class TextProcessor:
             
         Returns:
             List of text chunks
+            
+        The method uses a multi-level approach:
+        1. First tries to split by sentences
+        2. If sentences are too long, splits by paragraphs
+        3. If paragraphs are too long, splits by words
+        4. If words are too long, splits by characters (last resort)
         """
         logger.info(f"Chunking text of length {len(text)} characters")
         
@@ -88,28 +94,96 @@ class TextProcessor:
         
         chunks = []
         current_chunk = ""
+        
+        # First try to split by sentences
         sentences = _tokenizer.tokenize(text)
         
         for sentence in sentences:
-            if len(current_chunk) + len(sentence) < self.max_chunk_size:
-                current_chunk += sentence + ' '
-            else:
-                # If current chunk is not empty, add it to chunks
+            # If adding this sentence would exceed the chunk size
+            if len(current_chunk) + len(sentence) + 1 > self.max_chunk_size:
                 if current_chunk:
                     chunks.append(current_chunk.strip())
+                    current_chunk = ""
                 
-                # Start a new chunk
-                current_chunk = sentence + ' '
+                # If a single sentence is too long, try splitting by paragraphs
+                if len(sentence) > self.max_chunk_size:
+                    logger.warning(f"Sentence exceeds max chunk size ({len(sentence)} > {self.max_chunk_size}), trying paragraph split")
+                    paragraphs = sentence.split('\n\n')
+                    
+                    for paragraph in paragraphs:
+                        if len(paragraph) > self.max_chunk_size:
+                            # If paragraph is too long, split by words
+                            logger.warning(f"Paragraph exceeds max chunk size ({len(paragraph)} > {self.max_chunk_size}), splitting by words")
+                            words = paragraph.split()
+                            current_part = ""
+                            
+                            for word in words:
+                                if len(current_part) + len(word) + 1 > self.max_chunk_size:
+                                    if current_part:
+                                        chunks.append(current_part.strip())
+                                        current_part = ""
+                                
+                                # If a single word is too long, split by characters (last resort)
+                                if len(word) > self.max_chunk_size:
+                                    logger.warning(f"Word exceeds max chunk size ({len(word)} > {self.max_chunk_size}), splitting by characters")
+                                    for i in range(0, len(word), self.max_chunk_size):
+                                        chunks.append(word[i:i + self.max_chunk_size])
+                                else:
+                                    current_part += word + " "
+                            
+                            if current_part:
+                                chunks.append(current_part.strip())
+                        else:
+                            current_chunk = paragraph + "\n\n"
+                else:
+                    current_chunk = sentence + " "
+            else:
+                current_chunk += sentence + " "
         
         # Add the final chunk if not empty
         if current_chunk:
             chunks.append(current_chunk.strip())
         
-        logger.info(f"Created {len(chunks)} chunks")
+        # Final validation
         for i, chunk in enumerate(chunks):
-            logger.debug(f"Chunk {i+1} length: {len(chunk)} characters")
+            chunk_length = len(chunk)
+            logger.debug(f"Chunk {i+1} length: {chunk_length} characters")
+            if chunk_length > self.max_chunk_size:
+                logger.error(f"Chunk {i+1} still exceeds max chunk size ({chunk_length} > {self.max_chunk_size})")
+                # If we still have oversized chunks, force split them
+                if chunk_length > self.max_chunk_size:
+                    chunks[i:i+1] = [chunk[j:j + self.max_chunk_size] 
+                                   for j in range(0, len(chunk), self.max_chunk_size)]
         
+        logger.info(f"Created {len(chunks)} chunks")
         return chunks
+    
+    def _read_file_with_encoding(self, file_path: Path) -> str:
+        """
+        Try to read a file with different encodings.
+        
+        Args:
+            file_path: Path to the file to read
+            
+        Returns:
+            The file contents as a string
+            
+        Raises:
+            TextProcessingError if no encoding works
+        """
+        encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
+        
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    return f.read()
+            except UnicodeDecodeError:
+                logger.debug(f"Failed to read {file_path} with {encoding} encoding")
+                continue
+        
+        error_msg = f"Could not read {file_path} with any of the attempted encodings: {encodings}"
+        logger.error(error_msg)
+        raise TextProcessingError(error_msg)
     
     def process_folder(self, folder_path: Union[str, Path]) -> Dict[str, str]:
         """
@@ -140,9 +214,7 @@ class TextProcessor:
                 logger.debug(f"Processing file: {file_path.name}")
                 
                 # Read and process the file
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-                
+                text = self._read_file_with_encoding(file_path)
                 processed_text = self.preprocess(text)
                 result[file_path.name] = processed_text
                 
