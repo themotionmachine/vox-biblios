@@ -1,30 +1,115 @@
-# Vox Biblios 
+# Vox Biblios
 
-## A Personal Text-to-Podcast Generator
+A personal text-to-podcast generator that converts text files and web content into podcast episodes.
 
-Vox Biblios is a versatile personal podcast generator built using Python. It allows users to convert text files or web content into podcast episodes and publish them to an RSS feed.
+## Features
 
-### Features
+- **Text-to-Podcast Conversion**: Process text files or web content into audio podcast episodes
+- **AWS Polly Integration**: High-quality text-to-speech using AWS Polly neural voices
+- **RSS Feed Generation**: Automatically generate and update an RSS feed for podcast distribution
+- **Cost Monitoring**: Built-in AWS cost estimation and monitoring
+- **Web Scraping**: Extract content from URLs for processing
+- **Flexible Input**: Accept local text files or web URLs
+- **Command Line Interface**: Easy-to-use CLI for all operations
 
-1. **Text-to-Podcast Conversion**: Converts text files or web content into podcast episodes.
-2. **RSS Feed Generation**: Generates and updates an RSS feed for the podcast.
-3. **Amazon Polly Integration**: Utilizes Amazon Polly to convert text to speech and upload the audio to an S3 bucket.
-4. **Web Content Processing**: Ability to fetch and process content from URLs.
-5. **Flexible Input**: Accepts either a folder path containing text files or a URL as input.
+## Installation
 
-### Usage
+### Prerequisites
 
-To use Vox Biblios, run the following command:
+- Python 3.8 or higher
+- AWS account with Polly and S3 access
+- AWS credentials configured
+
+### Installation from PyPI
+
+```bash
+pip install vox-biblios
+```
+
+### Installation from Source
+
+```bash
+git clone https://github.com/username/vox-biblios.git
+cd vox-biblios
+pip install -e .
+```
+
+## Configuration
+
+Vox Biblios uses environment variables for configuration. Copy the `.env.example` file to `.env` and customize:
+
+```bash
+cp .env.example .env
+nano .env  # Edit with your settings
+```
+
+Required environment variables:
+
+- `AWS_ACCESS_KEY`: Your AWS access key
+- `AWS_SECRET_KEY`: Your AWS secret key
+
+All other settings have sensible defaults, but you can customize them as needed.
+
+## Usage
+
+### Basic Commands
+
+Process text files in a directory:
+
+```bash
+vox-biblios process path/to/text/files/
+```
+
+Process content from a URL:
+
+```bash
+vox-biblios process https://example.com/article
+```
+
+Clear the podcast feed:
+
+```bash
+vox-biblios clear
+```
+
+Check AWS cost estimates:
+
+```bash
+vox-biblios cost
+```
+
+Show version information:
+
+```bash
+vox-biblios version
+```
+
+### Text File Format
+
+Vox Biblios accepts any plain text files with `.txt` extension. No special formatting is required.
+
+### RSS Feed
+
+The generated RSS feed is uploaded to your S3 bucket and is available at:
+
+```
+https://s3.{region}.amazonaws.com/{bucket}/{rss_filename}
+```
+
+This URL can be added to podcast players to subscribe to your generated podcast.
 
 
 
-## Todo
-implement: https://claude.ai/chat/62eaca82-ee1c-4860-b8e2-869c357bab9f
+## Architecture
 
-## Notes
+Vox Biblios follows a modular architecture:
 
-- The `chunk_text` function is designed to split the text into chunks of 99,000 characters each.
-- The `send_polly_job` function is used to send the text to Amazon Polly for conversion to speech.
-- The `update_rss` function is used to update the RSS feed with the new podcast episode.
-- The `upload_file` function is used to upload the RSS feed to an S3 bucket.
-- The `delete_old_texts` function is used to delete old text files from the input folder.
+- **Core**: Central podcast manager and text processing
+- **AWS**: Integration with AWS services (Polly, S3, Cost Explorer)
+- **Adapters**: External service integrations (RSS, web scraper)
+- **Utils**: Shared utilities (logging, helpers)
+- **CLI**: Command line interface
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
