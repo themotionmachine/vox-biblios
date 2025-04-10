@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 from datetime import datetime, timezone
 import time
+from urllib.parse import urlparse
 
 from vox_biblios.config import config
 from vox_biblios.utils.logging import get_logger, SoundWaveAnimation
@@ -137,6 +138,19 @@ class PodcastManager:
                 self.animation.stop()
                 return []
             
+            # Get title with fallbacks
+            title = content.get('title', '')
+            if not title:
+                # Try to get title from URL path
+                parsed_url = urlparse(url)
+                path = parsed_url.path.strip('/')
+                if path:
+                    # Clean up path to make it more readable
+                    title = path.replace('-', ' ').replace('_', ' ').title()
+                else:
+                    # Last resort: use domain name
+                    title = parsed_url.netloc.replace('www.', '')
+            
             # Preprocess text
             text = self.text_processor.preprocess(content['text'])
             
@@ -148,7 +162,7 @@ class PodcastManager:
             
             # Process each chunk
             for i, chunk in enumerate(chunks):
-                chunk_title = f"{content['title']} (Part {i+1})" if len(chunks) > 1 else content['title']
+                chunk_title = f"{title} (Part {i+1})" if len(chunks) > 1 else title
                 
                 # Send to Polly
                 logger.info(f"Sending chunk {i+1}/{len(chunks)} to Polly")
