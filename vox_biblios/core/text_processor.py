@@ -65,6 +65,7 @@ class TextProcessor:
         text = self._remove_urls(text)
         text = self._remove_noise(text)
         text = self._remove_long_numbers(text)
+        text = self._remove_bibliography(text)
         text = self._normalize_whitespace(text)
         
         logger.info(f"Preprocessing complete, final length: {len(text)} characters")
@@ -291,6 +292,77 @@ class TextProcessor:
     
     def _normalize_whitespace(self, text: str) -> str:
         """Normalize whitespace in text."""
-        logger.debug("Normalizing whitespace")
-        # Replace multiple whitespace characters with a single space
-        return re.sub(r'\s+', ' ', text).strip()
+        # Replace multiple spaces with single space
+        text = re.sub(r'\s+', ' ', text)
+        # Remove leading/trailing whitespace
+        return text.strip()
+
+    def _remove_bibliography(self, text: str) -> str:
+        """
+        Remove bibliography section from text.
+        
+        Args:
+            text: Input text
+            
+        Returns:
+            Text with bibliography section removed
+        """
+        logger.info("Removing bibliography section")
+        
+        original_length = len(text)
+        processed_text = self._remove_bibliography_helper(text)
+        removed_length = original_length - len(processed_text)
+        
+        if removed_length > 0:
+            percentage = (removed_length / original_length) * 100
+            logger.info(f"Removed bibliography: {removed_length} characters ({percentage:.1f}% of document)")
+        else:
+            logger.info("No bibliography section detected")
+        
+        return processed_text
+
+    def _remove_bibliography_helper(self, text: str) -> str:
+        """
+        Helper function to remove bibliography section from text.
+        
+        Args:
+            text: Input text
+            
+        Returns:
+            Text with bibliography section removed
+        """
+        # Split text into lines for better context analysis
+        lines = text.split('\n')
+        
+        # Common bibliography section header patterns
+        patterns = [
+            r'^(?:\s*|\d+\.\s*)References\s*$',
+            r'^(?:\s*|\d+\.\s*)Bibliography\s*$',
+            r'^(?:\s*|\d+\.\s*)Works\s+Cited\s*$',
+            r'^(?:\s*|\d+\.\s*)Literature\s+Cited\s*$',
+            r'^(?:\s*|\d+\.\s*)Cited\s+Literature\s*$',
+            r'^(?:\s*|\d+\.\s*)Sources\s*$',
+            r'^(?:\s*|\d+\.\s*)References\s+and\s+Notes\s*$',
+            r'^(?:\s*|\d+\.\s*)Works\s+Consulted\s*$'
+        ]
+        
+        # Only consider matches in the last 30% of the document
+        cutoff_index = int(len(lines) * 0.7)
+        
+        # Find potential bibliography header lines
+        for i in range(cutoff_index, len(lines)):
+            line = lines[i]
+            
+            # Check against each pattern
+            if any(re.match(pattern, line, re.IGNORECASE) for pattern in patterns):
+                # Verify it's a standalone header
+                # (empty line before or after, or at document start/end)
+                is_standalone = (i == 0 or not lines[i-1].strip() or 
+                                i == len(lines)-1 or not lines[i+1].strip())
+                
+                if is_standalone:
+                    # Return text up to this point
+                    return '\n'.join(lines[:i])
+        
+        # No bibliography section found
+        return text
