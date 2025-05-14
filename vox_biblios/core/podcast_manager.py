@@ -84,10 +84,14 @@ class PodcastManager:
                         # Create episode data
                         timestamp = datetime.now(timezone.utc)
                         
+                        # Add text preview to description using configured preview length
+                        preview_length = config.app.preview_length
+                        text_preview = chunk[:preview_length].strip() + "..." if len(chunk) > preview_length else chunk.strip()
+                        
                         episode_data = {
                             'title': chunk_title,
                             'url': output_uri,
-                            'description': f"Generated from {filename}",
+                            'description': f"Generated from {filename}\n\nPreview: {text_preview}",
                             'pubDate': timestamp
                         }
                         
@@ -175,10 +179,14 @@ class PodcastManager:
                     # Create episode data
                     timestamp = datetime.now(timezone.utc)
                     
+                    # Add text preview to description using configured preview length
+                    preview_length = config.app.preview_length
+                    text_preview = chunk[:preview_length].strip() + "..." if len(chunk) > preview_length else chunk.strip()
+                    
                     episode_data = {
                         'title': chunk_title,
                         'url': output_uri,
-                        'description': f"Generated from {url}",
+                        'description': f"Generated from {url}\n\nPreview: {text_preview}",
                         'pubDate': timestamp
                     }
                     
