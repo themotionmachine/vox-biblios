@@ -16,22 +16,34 @@ A personal text-to-podcast generator that converts text files and web content in
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.10 or higher
+- [uv](https://github.com/astral-sh/uv) package manager 
 - AWS account with Polly and S3 access
 - AWS credentials configured
 
-### Installation from PyPI
+### Quick Installation
+
+The simplest way to install and run Vox Biblios is using the provided scripts:
 
 ```bash
-pip install vox-biblios
+# Install and set up Vox Biblios
+./setup_voxbiblios.sh
+
+# Run Vox Biblios
+./run_voxbiblios.sh [command]
 ```
 
-### Installation from Source
+### Manual Installation with uv
+
+If you prefer a manual installation:
 
 ```bash
-git clone https://github.com/username/vox-biblios.git
-cd vox-biblios
-pip install -e .
+# Create and activate a virtual environment
+uv venv
+source .venv/bin/activate
+
+# Install in development mode
+uv pip install -e .
 ```
 
 ## Configuration
@@ -112,4 +124,4 @@ Vox Biblios follows a modular architecture:
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the LICENSE file for details

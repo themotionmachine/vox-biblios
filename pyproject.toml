@@ -8,8 +8,34 @@ version = "0.1.0"
 description = "Text-to-Podcast Generator"
 requires-python = ">=3.10"
 dependencies = [
+    # Core dependencies
     "colorama",
+    "python-dotenv",
+    
+    # AWS related
+    "boto3",
+    "botocore",
+    "backoff",
+    
+    # Text processing
+    "nltk",
+    
+    # Web scraping
+    "goose3",
+    "requests",
+    "beautifulsoup4",
+    "trafilatura",
+    
+    # Podcast/RSS
+    "podgen",
+    "xmltodict",
+    
+    # Data processing
+    "pandas",
 ]
 
 [project.scripts]
-vox-biblios = "vox_biblios.cli:main" 
+vox-biblios = "vox_biblios.cli:main"
+
+[tool.uv]
+editable = true
