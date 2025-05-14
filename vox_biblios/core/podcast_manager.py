@@ -6,6 +6,8 @@ from pathlib import Path
 import os
 from datetime import datetime, timezone
 import time
+import subprocess
+import tempfile
 from urllib.parse import urlparse
 
 from vox_biblios.config import config
@@ -31,6 +33,7 @@ class PodcastManager:
         self.rss_manager = PodcastRSSManager()
         self.web_scraper = WebScraper()
         self.animation = SoundWaveAnimation()
+        self.use_local_say = True
         
         logger.debug("Initialized PodcastManager")
     
@@ -69,35 +72,48 @@ class PodcastManager:
                 chunks = self.text_processor.chunk(text)
                 logger.info(f"Split {filename} into {len(chunks)} chunks")
                 
+                say_count = 0
+                polly_count = 0
                 # Process each chunk
                 for i, chunk in enumerate(chunks):
                     chunk_title = f"{filename} (Part {i+1})" if len(chunks) > 1 else filename
-                    
-                    # Send to Polly
-                    logger.info(f"Sending chunk {i+1}/{len(chunks)} to Polly")
-                    response = self.polly_service.synthesize_speech(chunk)
-                    
+                    if self.use_local_say:
+                        logger.info(f"Sending chunk {i+1}/{len(chunks)} using say")
+                        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp_in:
+                            tmp_in.write(chunk)
+                            input_file = tmp_in.name
+                        output_file = input_file.replace('.txt', '.aiff')
+                        cmd = ['say', '-f', input_file, '-o', output_file]
+                        result = subprocess.run(cmd, capture_output=True)
+                        if result.returncode != 0:
+                            logger.error(f"Failed say for chunk {i+1}/{len(chunks)}: {result.stderr.decode()}")
+                            os.remove(input_file)
+                            continue
+                        uploaded_url = self.s3_service.upload_file(output_file)
+                        response = {'SynthesisTask': {'OutputUri': uploaded_url}}
+                        os.remove(input_file)
+                        os.remove(output_file)
+                        say_count += 1
+                    else:
+                        logger.info(f"Sending chunk {i+1}/{len(chunks)} to Polly")
+                        response = self.polly_service.synthesize_speech(chunk)
+                        if response:
+                            polly_count += 1
+
                     if response:
-                        # Get output URI
-                        output_uri = response['SynthesisTask']['OutputUri']
-                        
-                        # Create episode data
                         timestamp = datetime.now(timezone.utc)
-                        
                         episode_data = {
                             'title': chunk_title,
-                            'url': output_uri,
+                            'url': response['SynthesisTask']['OutputUri'],
                             'description': f"Generated from {filename}",
                             'pubDate': timestamp
                         }
-                        
                         results.append(episode_data)
                         logger.info(f"Successfully processed chunk {i+1}/{len(chunks)}")
-                        
-                        # Small delay to avoid AWS throttling
                         time.sleep(1)
                     else:
                         logger.error(f"Failed to process chunk {i+1}/{len(chunks)}")
+                logger.info(f"Processed {len(chunks)} chunks: {say_count} using say, {polly_count} using Polly")
             
             # Clean up processed files
             if results:
@@ -160,35 +176,48 @@ class PodcastManager:
             
             results = []
             
+            say_count = 0
+            polly_count = 0
             # Process each chunk
             for i, chunk in enumerate(chunks):
                 chunk_title = f"{title} (Part {i+1})" if len(chunks) > 1 else title
-                
-                # Send to Polly
-                logger.info(f"Sending chunk {i+1}/{len(chunks)} to Polly")
-                response = self.polly_service.synthesize_speech(chunk)
-                
+                if self.use_local_say:
+                    logger.info(f"Sending chunk {i+1}/{len(chunks)} using say")
+                    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp_in:
+                        tmp_in.write(chunk)
+                        input_file = tmp_in.name
+                    output_file = input_file.replace('.txt', '.aiff')
+                    cmd = ['say', '-f', input_file, '-o', output_file]
+                    result = subprocess.run(cmd, capture_output=True)
+                    if result.returncode != 0:
+                        logger.error(f"Failed say for chunk {i+1}/{len(chunks)}: {result.stderr.decode()}")
+                        os.remove(input_file)
+                        continue
+                    uploaded_url = self.s3_service.upload_file(output_file)
+                    response = {'SynthesisTask': {'OutputUri': uploaded_url}}
+                    os.remove(input_file)
+                    os.remove(output_file)
+                    say_count += 1
+                else:
+                    logger.info(f"Sending chunk {i+1}/{len(chunks)} to Polly")
+                    response = self.polly_service.synthesize_speech(chunk)
+                    if response:
+                        polly_count += 1
+
                 if response:
-                    # Get output URI
-                    output_uri = response['SynthesisTask']['OutputUri']
-                    
-                    # Create episode data
                     timestamp = datetime.now(timezone.utc)
-                    
                     episode_data = {
                         'title': chunk_title,
-                        'url': output_uri,
+                        'url': response['SynthesisTask']['OutputUri'],
                         'description': f"Generated from {url}",
                         'pubDate': timestamp
                     }
-                    
                     results.append(episode_data)
                     logger.info(f"Successfully processed chunk {i+1}/{len(chunks)}")
-                    
-                    # Small delay to avoid AWS throttling
                     time.sleep(1)
                 else:
                     logger.error(f"Failed to process chunk {i+1}/{len(chunks)}")
+            logger.info(f"Processed {len(chunks)} chunks: {say_count} using say, {polly_count} using Polly")
             
             logger.info(f"Processed {len(results)} chunks from URL {url}")
             self.animation.stop()
