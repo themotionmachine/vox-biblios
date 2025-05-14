@@ -36,6 +36,3 @@ dependencies = [
 
 [project.scripts]
 vox-biblios = "vox_biblios.cli:main"
-
-[tool.uv]
-editable = true
