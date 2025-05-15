@@ -7,6 +7,7 @@ A personal text-to-podcast generator that converts text files and web content in
 - **Text-to-Podcast Conversion**: Process text files or web content into audio podcast episodes
 - **AWS Polly Integration**: High-quality text-to-speech using AWS Polly neural voices
 - **RSS Feed Generation**: Automatically generate and update an RSS feed for podcast distribution
+- **Text Previews**: Includes text previews in episode descriptions for better context
 - **Cost Monitoring**: Built-in AWS cost estimation and monitoring
 - **Web Scraping**: Extract content from URLs for processing
 - **Flexible Input**: Accept local text files or web URLs
@@ -59,6 +60,14 @@ Required environment variables:
 
 - `AWS_ACCESS_KEY`: Your AWS access key
 - `AWS_SECRET_KEY`: Your AWS secret key
+
+Optional environment variables:
+
+- `PREVIEW_LENGTH`: Number of text characters to include in episode descriptions (default: 100)
+- `CHUNK_SIZE`: Maximum character size for Polly text chunks (default: 90000)
+- `AWS_REGION`: AWS region to use (default: us-east-1)
+- `S3_BUCKET`: S3 bucket for storing audio files (default: vox-biblios)
+- `POLLY_VOICE_ID`: AWS Polly voice to use (default: Joanna)
 
 All other settings have sensible defaults, but you can customize them as needed.
 
