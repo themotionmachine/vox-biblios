@@ -82,17 +82,29 @@ class PodcastManager:
                         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp_in:
                             tmp_in.write(chunk)
                             input_file = tmp_in.name
-                        output_file = input_file.replace('.txt', '.aiff')
-                        cmd = ['say', '-f', input_file, '-o', output_file]
+                        aiff_file = input_file.replace('.txt', '.aiff')
+                        m4a_file = input_file.replace('.txt', '.m4a')
+                        cmd = ['say', '-f', input_file, '-o', aiff_file]
                         result = subprocess.run(cmd, capture_output=True)
                         if result.returncode != 0:
                             logger.error(f"Failed say for chunk {i+1}/{len(chunks)}: {result.stderr.decode()}")
                             os.remove(input_file)
                             continue
-                        uploaded_url = self.s3_service.upload_file(output_file)
+
+                        # Convert AIFF to M4A
+                        af_cmd = ['afconvert', '-f', 'm4af', '-d', 'aac', '-o', m4a_file, aiff_file]
+                        af_result = subprocess.run(af_cmd, capture_output=True)
+                        if af_result.returncode != 0:
+                            logger.error(f"Failed to convert AIFF to M4A for chunk {i+1}/{len(chunks)}: {af_result.stderr.decode()}")
+                            os.remove(input_file)
+                            os.remove(aiff_file)
+                            continue
+
+                        uploaded_url = self.s3_service.upload_file(m4a_file)
                         response = {'SynthesisTask': {'OutputUri': uploaded_url}}
                         os.remove(input_file)
-                        os.remove(output_file)
+                        os.remove(aiff_file)
+                        os.remove(m4a_file)
                         say_count += 1
                     else:
                         logger.info(f"Sending chunk {i+1}/{len(chunks)} to Polly")
@@ -186,17 +198,29 @@ class PodcastManager:
                     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp_in:
                         tmp_in.write(chunk)
                         input_file = tmp_in.name
-                    output_file = input_file.replace('.txt', '.aiff')
-                    cmd = ['say', '-f', input_file, '-o', output_file]
+                    aiff_file = input_file.replace('.txt', '.aiff')
+                    m4a_file = input_file.replace('.txt', '.m4a')
+                    cmd = ['say', '-f', input_file, '-o', aiff_file]
                     result = subprocess.run(cmd, capture_output=True)
                     if result.returncode != 0:
                         logger.error(f"Failed say for chunk {i+1}/{len(chunks)}: {result.stderr.decode()}")
                         os.remove(input_file)
                         continue
-                    uploaded_url = self.s3_service.upload_file(output_file)
+
+                    # Convert AIFF to M4A
+                    af_cmd = ['afconvert', '-f', 'm4af', '-d', 'aac', '-o', m4a_file, aiff_file]
+                    af_result = subprocess.run(af_cmd, capture_output=True)
+                    if af_result.returncode != 0:
+                        logger.error(f"Failed to convert AIFF to M4A for chunk {i+1}/{len(chunks)}: {af_result.stderr.decode()}")
+                        os.remove(input_file)
+                        os.remove(aiff_file)
+                        continue
+
+                    uploaded_url = self.s3_service.upload_file(m4a_file)
                     response = {'SynthesisTask': {'OutputUri': uploaded_url}}
                     os.remove(input_file)
-                    os.remove(output_file)
+                    os.remove(aiff_file)
+                    os.remove(m4a_file)
                     say_count += 1
                 else:
                     logger.info(f"Sending chunk {i+1}/{len(chunks)} to Polly")
