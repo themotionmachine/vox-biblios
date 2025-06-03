@@ -32,6 +32,9 @@ dependencies = [
     
     # Data processing
     "pandas",
+
+    # CLI progress bar
+    "tqdm",
 ]
 
 [project.scripts]

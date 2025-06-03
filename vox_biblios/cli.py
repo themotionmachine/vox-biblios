@@ -11,7 +11,7 @@ from pathlib import Path
 from colorama import init, Fore, Style
 
 from vox_biblios.core.podcast_manager import PodcastManager
-from vox_biblios.utils.logging import get_logger, SoundWaveAnimation
+from vox_biblios.utils.logging import get_logger
 from vox_biblios.config import config
 
 # Initialize colorama for cross-platform colored terminal output
@@ -118,25 +118,14 @@ def process_command(args: argparse.Namespace) -> int:
         # Create and use podcast manager
         manager = PodcastManager()
         
-        if not args.verbose:
-            # Show animation during processing
-            animation = SoundWaveAnimation()
-            animation.start()
-        
         try:
             rss_url = manager.process_and_update(input_source)
-            
-            if not args.verbose:
-                animation.stop()
             
             print(Fore.GREEN + "✅ Processing completed successfully!" + Style.RESET_ALL)
             print(f"RSS feed available at: {rss_url}")
             return 0
             
         except Exception as e:
-            if not args.verbose:
-                animation.stop()
-            
             print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
             logger.error(f"Processing failed: {str(e)}", exc_info=True)
             return 1

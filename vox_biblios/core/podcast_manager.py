@@ -11,7 +11,8 @@ import tempfile
 from urllib.parse import urlparse
 
 from vox_biblios.config import config
-from vox_biblios.utils.logging import get_logger, SoundWaveAnimation
+from vox_biblios.utils.logging import get_logger
+from tqdm import tqdm
 from vox_biblios.core.text_processor import TextProcessor
 from vox_biblios.aws.polly import PollyService
 from vox_biblios.aws.s3 import S3Service
@@ -32,7 +33,6 @@ class PodcastManager:
         self.s3_service = S3Service()
         self.rss_manager = PodcastRSSManager()
         self.web_scraper = WebScraper()
-        self.animation = SoundWaveAnimation()
         self.use_local_say = True
         
         logger.debug("Initialized PodcastManager")
@@ -51,7 +51,6 @@ class PodcastManager:
             PodcastManagerError: If processing fails
         """
         logger.info(f"Processing texts from folder: {folder_path}")
-        self.animation.start()
         
         try:
             # Process texts
@@ -59,7 +58,6 @@ class PodcastManager:
             
             if not processed_texts:
                 logger.warning(f"No text files found in {folder_path}")
-                self.animation.stop()
                 return []
             
             results = []
@@ -74,8 +72,8 @@ class PodcastManager:
                 
                 say_count = 0
                 polly_count = 0
-                # Process each chunk
-                for i, chunk in enumerate(chunks):
+                # Process each chunk with progress bar
+                for i, chunk in enumerate(tqdm(chunks, desc=f"{filename}", unit="chunk")):
                     chunk_title = f"{filename} (Part {i+1})" if len(chunks) > 1 else filename
                     if self.use_local_say:
                         logger.info(f"Sending chunk {i+1}/{len(chunks)} using say")
@@ -136,11 +134,9 @@ class PodcastManager:
                 self.text_processor.delete_processed_files(folder_path)
             
             logger.info(f"Processed {len(results)} chunks from {len(processed_texts)} files")
-            self.animation.stop()
             return results
-            
+
         except Exception as e:
-            self.animation.stop()
             error_msg = f"Failed to process texts from folder {folder_path}: {str(e)}"
             logger.error(error_msg)
             raise PodcastManagerError(error_msg) from e
@@ -159,15 +155,12 @@ class PodcastManager:
             PodcastManagerError: If processing fails
         """
         logger.info(f"Processing content from URL: {url}")
-        self.animation.start()
-        
         try:
             # Extract content from URL
             content = self.web_scraper.extract_content(url)
             
             if not content or not content.get('text'):
                 logger.warning(f"No content extracted from {url}")
-                self.animation.stop()
                 return []
             
             # Get title with fallbacks
@@ -194,8 +187,8 @@ class PodcastManager:
             
             say_count = 0
             polly_count = 0
-            # Process each chunk
-            for i, chunk in enumerate(chunks):
+            # Process each chunk with progress bar
+            for i, chunk in enumerate(tqdm(chunks, desc=f"{title}", unit="chunk")):
                 chunk_title = f"{title} (Part {i+1})" if len(chunks) > 1 else title
                 if self.use_local_say:
                     logger.info(f"Sending chunk {i+1}/{len(chunks)} using say")
@@ -253,11 +246,9 @@ class PodcastManager:
             logger.info(f"Processed {len(chunks)} chunks: {say_count} using say, {polly_count} using Polly")
             
             logger.info(f"Processed {len(results)} chunks from URL {url}")
-            self.animation.stop()
             return results
-            
+
         except Exception as e:
-            self.animation.stop()
             error_msg = f"Failed to process content from URL {url}: {str(e)}"
             logger.error(error_msg)
             raise PodcastManagerError(error_msg) from e
