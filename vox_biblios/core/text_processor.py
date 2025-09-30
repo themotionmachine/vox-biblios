@@ -24,9 +24,6 @@ except LookupError:
 # Create a tokenizer instance
 _tokenizer = PunktSentenceTokenizer()
 
-# Set the NLTK data path to ensure it's found
-nltk.data.path.append('/Users/rwm/nltk_data')
-
 # Ensure we have the correct punkt data
 try:
     nltk.data.find('tokenizers/punkt/english.pickle')

@@ -259,7 +259,7 @@ def version_command(_: argparse.Namespace) -> int:
     from vox_biblios import __version__
     print(Fore.CYAN + "Vox Biblios: Text-to-Podcast Generator" + Style.RESET_ALL)
     print(f"Version: {__version__}")
-    print("Author: High Agency Python Developer")
+    print("Author: Ryan Williams")
     return 0
 
 

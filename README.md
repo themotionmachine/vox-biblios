@@ -5,7 +5,7 @@ A personal text-to-podcast generator that converts text files and web content in
 ## Features
 
 - **Text-to-Podcast Conversion**: Process text files or web content into audio podcast episodes
-- **Local and AWS TTS**: Uses macOS `say` for quick, offline generation with automatic AIFF to M4A conversion, and falls back to AWS Polly neural voices when needed
+- **Local and AWS TTS**: Uses macOS `say` for quick, offline generation (macOS only) with automatic AIFF to M4A conversion, and AWS Polly neural voices for cross-platform support
 - **RSS Feed Generation**: Automatically generate and update an RSS feed for podcast distribution
 - **Text Previews**: Includes text previews in episode descriptions for better context
 - **Cost Monitoring**: Built-in AWS cost estimation and monitoring
@@ -19,9 +19,18 @@ A personal text-to-podcast generator that converts text files and web content in
 ### Prerequisites
 
 - Python 3.10 or higher
-- [uv](https://github.com/astral-sh/uv) package manager 
+- [uv](https://github.com/astral-sh/uv) package manager
 - AWS account with Polly and S3 access (in order to use AWS Polly)
 - AWS credentials configured
+
+### Platform-Specific Features
+
+**macOS only:**
+- `--use-local-speech` flag requires macOS with `say` and `afconvert` commands
+- These are included by default on macOS
+
+**All platforms:**
+- AWS Polly text-to-speech (requires AWS account and credentials)
 
 ### Quick Installation
 
@@ -82,6 +91,14 @@ Optional environment variables:
 All other settings have sensible defaults, but you can customize them as needed.
 
 ## Usage
+
+### Default Behavior
+
+When run without arguments, Vox Biblios processes all `.txt` files in the `text-q` directory (created automatically if it doesn't exist):
+
+```bash
+vox-biblios  # Processes text-q/ directory
+```
 
 ### Basic Commands
 

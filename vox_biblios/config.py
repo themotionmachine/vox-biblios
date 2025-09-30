@@ -36,9 +36,9 @@ class AppConfig:
     rss_filename: str = "voxbiblios.rss"
     podcast_name: str = "Vox Biblios"
     podcast_description: str = "I speak with the voices of all the words I've seen."
-    podcast_website: str = "activationlayer.org"
+    podcast_website: str = "example.org"
     podcast_explicit: bool = False
-    podcast_image: str = "https://s3.us-east-1.amazonaws.com/vox-biblios/podcast-image.png"
+    podcast_image: str 
 
 
 class Config:
@@ -83,8 +83,7 @@ class Config:
                                                "I speak with the voices of all the words I've seen."),
             podcast_website=os.environ.get("PODCAST_WEBSITE", "vox-biblios.example.com"),
             podcast_explicit=os.environ.get("PODCAST_EXPLICIT", "").lower() == "true",
-            podcast_image=os.environ.get("PODCAST_IMAGE", 
-                                         "https://s3.us-east-1.amazonaws.com/vox-biblios/podcast-image.png")
+            podcast_image=os.environ.get("PODCAST_IMAGE")
         )
     
     @property
