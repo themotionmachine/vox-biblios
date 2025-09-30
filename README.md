@@ -20,7 +20,7 @@ A personal text-to-podcast generator that converts text files and web content in
 
 - Python 3.10 or higher
 - [uv](https://github.com/astral-sh/uv) package manager 
-- AWS account with Polly and S3 access
+- AWS account with Polly and S3 access (in order to use AWS Polly)
 - AWS credentials configured
 
 ### Quick Installation
@@ -45,7 +45,7 @@ uv venv
 source .venv/bin/activate
 
 # Install in development mode
-uv pip install -e .
+uv sync
 ```
 
 ## Configuration
