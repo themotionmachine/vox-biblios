@@ -87,6 +87,12 @@ Process content from a URL:
 vox-biblios process https://example.com/article
 ```
 
+Process using macOS "say" command instead of AWS Polly:
+
+```bash
+vox-biblios process --use-local-speech path/to/text/files/
+```
+
 Clear the podcast feed:
 
 ```bash
@@ -104,6 +110,12 @@ Show version information:
 ```bash
 vox-biblios version
 ```
+
+### Command Options
+
+**Process Command Options:**
+- `--use-local-speech`: Use macOS "say" command instead of AWS Polly for text-to-speech generation. This option allows you to generate audio locally without AWS costs, though the audio quality may differ from AWS Polly's neural voices.
+- `-v, --verbose`: Enable verbose output for debugging
 
 ### Text File Format
 

@@ -57,11 +57,11 @@ def get_logger(name: str) -> logging.Logger:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(LogFormatter())
         logger.addHandler(console_handler)
-        
+
         # File handler
         log_dir = Path(config.app.log_dir)
         log_dir.mkdir(exist_ok=True)
-        
+
         log_file = log_dir / config.app.log_file
         file_handler = RotatingFileHandler(
             log_file,
@@ -72,7 +72,10 @@ def get_logger(name: str) -> logging.Logger:
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         ))
         logger.addHandler(file_handler)
-    
+
+    # Prevent log messages from being propagated to ancestor loggers to avoid duplicates
+    logger.propagate = False
+
     return logger
 
 

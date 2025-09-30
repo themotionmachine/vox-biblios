@@ -59,6 +59,11 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         action='store_true',
         help='Enable verbose output'
     )
+    process_parser.add_argument(
+        '--use-local-speech',
+        action='store_true',
+        help='Use macOS "say" command instead of AWS Polly for text-to-speech'
+    )
     
     # Clear command
     clear_parser = subparsers.add_parser('clear', help='Clear podcast feed')
@@ -116,7 +121,8 @@ def process_command(args: argparse.Namespace) -> int:
             print(f"Processing text files from folder: {input_source}")
         
         # Create and use podcast manager
-        manager = PodcastManager()
+        use_local_speech = getattr(args, 'use_local_speech', False)
+        manager = PodcastManager(use_local_speech=use_local_speech)
         
         if not args.verbose:
             # Show animation during processing
@@ -161,7 +167,7 @@ def clear_command(args: argparse.Namespace) -> int:
     
     try:
         # Create and use podcast manager
-        manager = PodcastManager()
+        manager = PodcastManager(use_local_speech=False)
         
         try:
             rss_url = manager.clear_podcast_feed()

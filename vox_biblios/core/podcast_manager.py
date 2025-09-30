@@ -25,17 +25,21 @@ logger = get_logger(__name__)
 class PodcastManager:
     """Central manager for Vox Biblios podcast generator."""
     
-    def __init__(self):
-        """Initialize the podcast manager with all necessary components."""
+    def __init__(self, use_local_speech: bool = False):
+        """Initialize the podcast manager with all necessary components.
+        
+        Args:
+            use_local_speech: If True, use macOS "say" command instead of AWS Polly
+        """
         self.text_processor = TextProcessor()
         self.polly_service = PollyService()
         self.s3_service = S3Service()
         self.rss_manager = PodcastRSSManager()
         self.web_scraper = WebScraper()
         self.animation = SoundWaveAnimation()
-        self.use_local_say = True
+        self.use_local_say = use_local_speech
         
-        logger.debug("Initialized PodcastManager")
+        logger.debug(f"Initialized PodcastManager (use_local_say={use_local_speech})")
     
     def process_texts_from_folder(self, folder_path: Union[str, Path]) -> List[Dict[str, Any]]:
         """
