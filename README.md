@@ -5,11 +5,12 @@ A personal text-to-podcast generator that converts text files and web content in
 ## Features
 
 - **Text-to-Podcast Conversion**: Process text files or web content into audio podcast episodes
-- **AWS Polly Integration**: High-quality text-to-speech using AWS Polly neural voices
+- **Local and AWS TTS**: Uses macOS `say` for quick, offline generation with automatic AIFF to M4A conversion, and falls back to AWS Polly neural voices when needed
 - **RSS Feed Generation**: Automatically generate and update an RSS feed for podcast distribution
 - **Text Previews**: Includes text previews in episode descriptions for better context
 - **Cost Monitoring**: Built-in AWS cost estimation and monitoring
 - **Web Scraping**: Extract content from URLs for processing
+- **Automatic Text Cleanup**: Removes URLs, noise, long numbers and bibliography sections before conversion
 - **Flexible Input**: Accept local text files or web URLs
 - **Command Line Interface**: Easy-to-use CLI for all operations
 
@@ -49,11 +50,11 @@ uv pip install -e .
 
 ## Configuration
 
-Vox Biblios uses environment variables for configuration. Copy the `.env.example` file to `.env` and customize:
+Vox Biblios reads configuration from environment variables. Create a `.env.local` file in the project root and add your settings:
 
 ```bash
-cp .env.example .env
-nano .env  # Edit with your settings
+touch .env.local
+nano .env.local  # Edit with your configuration
 ```
 
 Required environment variables:
@@ -68,6 +69,15 @@ Optional environment variables:
 - `AWS_REGION`: AWS region to use (default: us-east-1)
 - `S3_BUCKET`: S3 bucket for storing audio files (default: vox-biblios)
 - `POLLY_VOICE_ID`: AWS Polly voice to use (default: Joanna)
+- `POLLY_ENGINE`: Polly engine to use (default: neural)
+- `POLLY_FORMAT`: Output audio format (default: mp3)
+- `POLLY_KEY_PREFIX`: S3 key prefix for audio files (default: audio)
+- `RSS_FILENAME`: Name of the RSS feed file (default: voxbiblios.rss)
+- `PODCAST_NAME`: Podcast title (default: Vox Biblios)
+- `PODCAST_DESCRIPTION`: Podcast description
+- `PODCAST_WEBSITE`: Website URL for the podcast
+- `PODCAST_IMAGE`: URL to podcast artwork
+- `LOG_LEVEL`: Logging level (default: INFO)
 
 All other settings have sensible defaults, but you can customize them as needed.
 
@@ -130,6 +140,24 @@ https://s3.{region}.amazonaws.com/{bucket}/{rss_filename}
 ```
 
 This URL can be added to podcast players to subscribe to your generated podcast.
+
+### Scripting and Automation
+
+Vox Biblios can be integrated into automation pipelines. Use the `vox-biblios` CLI in shell scripts to process new text and update your feed.
+
+```bash
+#!/bin/bash
+# nightly.sh - run from cron or other schedulers
+set -e
+
+# Navigate to the Vox Biblios project
+cd /path/to/vox-biblios
+
+# Activate the environment and process a folder of new articles
+./run_voxbiblios.sh process /data/new-articles
+```
+
+Schedule this script with `cron` or another job runner to automatically convert new text files and upload the updated RSS feed.
 
 
 
