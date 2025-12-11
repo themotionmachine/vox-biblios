@@ -12,7 +12,7 @@ from colorama import init, Fore, Style
 
 from vox_biblios.core.podcast_manager import PodcastManager
 from vox_biblios.utils.logging import get_logger, SoundWaveAnimation
-from vox_biblios.config import config
+from vox_biblios.config import config, get_config_sources
 
 # Initialize colorama for cross-platform colored terminal output
 init()
@@ -40,6 +40,8 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
           vox-biblios process https://example.com/  # Process content from URL
           vox-biblios clear                     # Clear the podcast feed
           vox-biblios cost                      # Show AWS cost estimate
+          vox-biblios config init               # Initialize configuration file
+          vox-biblios config show               # Show configuration sources
         """)
     )
     
@@ -84,7 +86,14 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     
     # Version command
     subparsers.add_parser('version', help='Show version information')
-    
+
+    # Config command
+    config_parser = subparsers.add_parser('config', help='Manage configuration')
+    config_subparsers = config_parser.add_subparsers(dest='config_command', help='Configuration command')
+    config_subparsers.add_parser('init', help='Initialize configuration file')
+    config_subparsers.add_parser('show', help='Show configuration sources')
+    config_subparsers.add_parser('edit', help='Edit configuration file')
+
     # Parse args
     return parser.parse_args(args)
 
@@ -249,10 +258,10 @@ def cost_command(args: argparse.Namespace) -> int:
 def version_command(_: argparse.Namespace) -> int:
     """
     Execute version command.
-    
+
     Args:
         _: Command line arguments (unused)
-        
+
     Returns:
         Exit code
     """
@@ -260,6 +269,163 @@ def version_command(_: argparse.Namespace) -> int:
     print(Fore.CYAN + "Vox Biblios: Text-to-Podcast Generator" + Style.RESET_ALL)
     print(f"Version: {__version__}")
     print("Author: Ryan Williams")
+    return 0
+
+
+def config_command(args: argparse.Namespace) -> int:
+    """
+    Execute config command.
+
+    Args:
+        args: Command line arguments
+
+    Returns:
+        Exit code
+    """
+    if not args.config_command:
+        print(Fore.RED + "Error: Please specify a config subcommand (init, show, or edit)" + Style.RESET_ALL)
+        return 1
+
+    if args.config_command == 'show':
+        print(Fore.CYAN + "📋 Vox Biblios: Configuration Sources" + Style.RESET_ALL)
+        sources = get_config_sources()
+
+        if sources:
+            print("\nConfiguration loaded from:")
+            for source in sources:
+                print(f"  ✓ {source}")
+        else:
+            print("\n⚠️  No configuration files found.")
+            print("Using environment variables only.")
+
+        print("\n" + Fore.YELLOW + "Configuration file priority:" + Style.RESET_ALL)
+        print("  1. ./.env.local (current directory)")
+        print("  2. ~/.config/vox-biblios/config.env (XDG config)")
+        print("  3. ~/.vox-biblios.env (home directory)")
+        print("  4. Environment variables")
+
+        return 0
+
+    elif args.config_command == 'init':
+        print(Fore.CYAN + "🔧 Vox Biblios: Initialize Configuration" + Style.RESET_ALL)
+
+        # Determine config location
+        xdg_config_home = os.getenv('XDG_CONFIG_HOME', os.path.expanduser('~/.config'))
+        config_dir = Path(xdg_config_home) / 'vox-biblios'
+        config_file = config_dir / 'config.env'
+
+        # Check if config already exists
+        if config_file.exists():
+            print(f"\n⚠️  Configuration file already exists at: {config_file}")
+            response = input("Overwrite? (y/N): ").strip().lower()
+            if response != 'y':
+                print("Cancelled.")
+                return 0
+
+        # Create config directory
+        try:
+            config_dir.mkdir(parents=True, exist_ok=True)
+
+            # Interactive prompts for configuration
+            print("\nEnter your configuration values (press Enter to use defaults):\n")
+
+            aws_access_key = input("AWS_ACCESS_KEY (required): ").strip()
+            aws_secret_key = input("AWS_SECRET_KEY (required): ").strip()
+
+            if not aws_access_key or not aws_secret_key:
+                print(Fore.RED + "\nError: AWS credentials are required." + Style.RESET_ALL)
+                return 1
+
+            aws_region = input("AWS_REGION [us-east-1]: ").strip() or "us-east-1"
+            s3_bucket = input("S3_BUCKET [vox-biblios]: ").strip() or "vox-biblios"
+            polly_voice = input("POLLY_VOICE_ID [Joanna]: ").strip() or "Joanna"
+            podcast_name = input("PODCAST_NAME [Vox Biblios]: ").strip() or "Vox Biblios"
+            podcast_website = input("PODCAST_WEBSITE [vox-biblios.example.com]: ").strip() or "vox-biblios.example.com"
+
+            # Write config file
+            config_content = f"""# Vox Biblios Configuration
+# Generated by: vox-biblios config init
+
+# Required AWS Credentials
+AWS_ACCESS_KEY={aws_access_key}
+AWS_SECRET_KEY={aws_secret_key}
+
+# AWS Settings
+AWS_REGION={aws_region}
+S3_BUCKET={s3_bucket}
+POLLY_VOICE_ID={polly_voice}
+POLLY_ENGINE=neural
+POLLY_FORMAT=mp3
+POLLY_KEY_PREFIX=audio
+
+# Podcast Settings
+PODCAST_NAME={podcast_name}
+PODCAST_DESCRIPTION=I speak with the voices of all the words I've seen.
+PODCAST_WEBSITE={podcast_website}
+PODCAST_EXPLICIT=false
+
+# Optional Settings
+# PREVIEW_LENGTH=100
+# CHUNK_SIZE=90000
+# LOG_LEVEL=INFO
+# RSS_FILENAME=voxbiblios.rss
+# PODCAST_IMAGE=https://example.com/image.jpg
+"""
+
+            config_file.write_text(config_content)
+            print(Fore.GREEN + f"\n✅ Configuration file created at: {config_file}" + Style.RESET_ALL)
+            print("\nYou can edit this file anytime with:")
+            print(f"  vox-biblios config edit")
+
+            return 0
+
+        except Exception as e:
+            print(Fore.RED + f"Error: Failed to create configuration file: {str(e)}" + Style.RESET_ALL)
+            logger.error(f"Config init failed: {str(e)}", exc_info=True)
+            return 1
+
+    elif args.config_command == 'edit':
+        print(Fore.CYAN + "📝 Vox Biblios: Edit Configuration" + Style.RESET_ALL)
+
+        # Find existing config file or suggest creation
+        sources = get_config_sources()
+
+        if sources:
+            config_file = Path(sources[0])  # Use first (highest priority) config file
+            print(f"\nOpening: {config_file}")
+        else:
+            # No config file exists, suggest standard location
+            xdg_config_home = os.getenv('XDG_CONFIG_HOME', os.path.expanduser('~/.config'))
+            config_file = Path(xdg_config_home) / 'vox-biblios' / 'config.env'
+
+            print(f"\n⚠️  No configuration file found.")
+            print(f"Creating new file at: {config_file}")
+
+            # Create directory and empty file
+            try:
+                config_file.parent.mkdir(parents=True, exist_ok=True)
+                if not config_file.exists():
+                    config_file.write_text("# Vox Biblios Configuration\n# Add your settings here\n\n")
+            except Exception as e:
+                print(Fore.RED + f"Error: Failed to create config file: {str(e)}" + Style.RESET_ALL)
+                return 1
+
+        # Open in editor
+        editor = os.getenv('EDITOR', 'nano')
+        try:
+            import subprocess
+            result = subprocess.run([editor, str(config_file)])
+            if result.returncode == 0:
+                print(Fore.GREEN + "\n✅ Configuration updated." + Style.RESET_ALL)
+                return 0
+            else:
+                print(Fore.RED + f"\nError: Editor exited with code {result.returncode}" + Style.RESET_ALL)
+                return result.returncode
+        except Exception as e:
+            print(Fore.RED + f"Error: Failed to open editor: {str(e)}" + Style.RESET_ALL)
+            print(f"\nYou can manually edit the file at: {config_file}")
+            return 1
+
     return 0
 
 
@@ -292,6 +458,8 @@ def main() -> int:
         return cost_command(args)
     elif args.command == 'version':
         return version_command(args)
+    elif args.command == 'config':
+        return config_command(args)
     else:
         print(Fore.RED + f"Error: Unknown command: {args.command}" + Style.RESET_ALL)
         return 1

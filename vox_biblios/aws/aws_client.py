@@ -24,31 +24,34 @@ class AWSClientFactory:
     def get_client(service_name: str, region_name: Optional[str] = None) -> Any:
         """
         Get an AWS service client.
-        
+
         Args:
             service_name: The AWS service name (e.g., 's3', 'polly')
             region_name: Optional region name override
-            
+
         Returns:
             The requested AWS service client
-            
+
         Raises:
             AWSClientError: If there's an error creating the client
         """
         try:
+            # Validate AWS credentials before creating client
+            config.aws.validate()
+
             region = region_name or config.aws.region
-            
+
             client = boto3.client(
                 service_name,
                 aws_access_key_id=config.aws.access_key,
                 aws_secret_access_key=config.aws.secret_key,
                 region_name=region
             )
-            
+
             logger.debug(f"Created AWS client for service: {service_name} in region: {region}")
             return client
-            
-        except ClientError as e:
+
+        except (ClientError, ValueError) as e:
             error_msg = f"Failed to create AWS client for {service_name}: {str(e)}"
             logger.error(error_msg)
             raise AWSClientError(error_msg) from e

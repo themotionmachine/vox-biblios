@@ -9,20 +9,65 @@ from pathlib import Path
 import logging
 from dotenv import load_dotenv
 
-# Load environment variables from .env.local file
-load_dotenv('.env.local')
+# Configuration file search strategy:
+# 1. Current working directory (.env.local) - for project-based usage
+# 2. XDG config directory (~/.config/vox-biblios/config.env) - standard location
+# 3. Home directory (~/.vox-biblios.env) - fallback location
+# 4. Environment variables already set (no .env file needed)
+
+def load_configuration():
+    """Load configuration from multiple possible locations."""
+    config_sources = []
+
+    # Location 1: Current working directory (for development/project use)
+    cwd_config = Path.cwd() / '.env.local'
+    if cwd_config.exists():
+        load_dotenv(cwd_config)
+        config_sources.append(str(cwd_config))
+
+    # Location 2: XDG config directory (standard for Linux/Unix)
+    xdg_config_home = os.getenv('XDG_CONFIG_HOME',
+                                 os.path.expanduser('~/.config'))
+    xdg_config = Path(xdg_config_home) / 'vox-biblios' / 'config.env'
+    if xdg_config.exists():
+        load_dotenv(xdg_config)
+        config_sources.append(str(xdg_config))
+
+    # Location 3: Home directory (macOS/Windows friendly)
+    home_config = Path.home() / '.vox-biblios.env'
+    if home_config.exists():
+        load_dotenv(home_config)
+        config_sources.append(str(home_config))
+
+    # Location 4: Environment variables already set (no action needed)
+    # This is checked in Config.__init__ by accessing os.environ
+
+    return config_sources
+
+# Load configuration from discovered locations
+# Note: load_dotenv won't override already-set environment variables
+_config_sources = load_configuration()
+
+def get_config_sources():
+    """Get list of configuration files that were loaded."""
+    return _config_sources
 
 @dataclass
 class AWSConfig:
     """AWS configuration settings."""
-    access_key: str
-    secret_key: str
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
     region: str = "us-east-1"
     s3_bucket: str = "vox-biblios"
     polly_engine: str = "neural"
     polly_format: str = "mp3"
     polly_voice_id: str = "Joanna"
     polly_output_key_prefix: str = "audio"
+
+    def validate(self):
+        """Validate that required AWS credentials are set."""
+        if not self.access_key or not self.secret_key:
+            raise ValueError("AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables must be set")
 
 
 @dataclass
@@ -48,14 +93,11 @@ class Config:
     
     def __init__(self):
         """Initialize configuration from environment variables."""
-        # Validate required environment variables
+        # Load AWS credentials (optional during init, validated when used)
         aws_access_key = os.environ.get("AWS_ACCESS_KEY")
         aws_secret_key = os.environ.get("AWS_SECRET_KEY")
-        
-        if not aws_access_key or not aws_secret_key:
-            raise ValueError("AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables must be set")
-        
-        # Initialize AWS configuration
+
+        # Initialize AWS configuration (credentials are optional for non-AWS commands)
         self.aws = AWSConfig(
             access_key=aws_access_key,
             secret_key=aws_secret_key,
@@ -92,5 +134,23 @@ class Config:
         return f"https://s3.{self.aws.region}.amazonaws.com/{self.aws.s3_bucket}/{self.app.rss_filename}"
 
 
-# Create a singleton configuration instance
-config = Config()
+# Lazy-loaded singleton configuration instance
+_config_instance = None
+
+def get_config() -> Config:
+    """
+    Get the singleton configuration instance.
+    Lazily initializes on first access.
+    """
+    global _config_instance
+    if _config_instance is None:
+        _config_instance = Config()
+    return _config_instance
+
+# For backward compatibility, create a property-like object
+class ConfigProxy:
+    """Proxy object that lazily loads config on attribute access."""
+    def __getattr__(self, name):
+        return getattr(get_config(), name)
+
+config = ConfigProxy()

@@ -19,7 +19,6 @@ A personal text-to-podcast generator that converts text files and web content in
 ### Prerequisites
 
 - Python 3.10 or higher
-- [uv](https://github.com/astral-sh/uv) package manager
 - AWS account with Polly and S3 access (in order to use AWS Polly)
 - AWS credentials configured
 
@@ -32,21 +31,75 @@ A personal text-to-podcast generator that converts text files and web content in
 **All platforms:**
 - AWS Polly text-to-speech (requires AWS account and credentials)
 
-### Quick Installation
+### Global Installation (Recommended)
 
-The simplest way to install and run Vox Biblios is using the provided scripts:
+Install vox-biblios as a global command that works from any directory without virtual environment activation.
+
+#### Option 1: Using uv (Recommended)
+
+```bash
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone the repository
+git clone https://github.com/themotionmachine/vox-biblios.git
+cd vox-biblios
+
+# Install vox-biblios globally from local directory
+uv tool install .
+```
+
+Or install directly from GitHub without cloning:
+
+```bash
+uv tool install git+https://github.com/themotionmachine/vox-biblios.git
+```
+
+#### Option 2: Using pipx
+
+```bash
+# Install pipx if not already installed
+python3 -m pip install --user pipx
+pipx ensurepath
+
+# Clone the repository
+git clone https://github.com/themotionmachine/vox-biblios.git
+cd vox-biblios
+
+# Install vox-biblios globally from local directory
+pipx install .
+```
+
+Or install directly from GitHub:
+
+```bash
+pipx install git+https://github.com/themotionmachine/vox-biblios.git
+```
+
+After installation, the `vox-biblios` command will be available globally:
+
+```bash
+vox-biblios config init    # Set up configuration
+vox-biblios process text-q/  # Use from anywhere
+```
+
+> **Note**: Once published to PyPI, you'll be able to install with just `uv tool install vox-biblios` or `pipx install vox-biblios`.
+
+### Development Installation
+
+For local development or if you prefer the project-based approach:
+
+#### Quick Setup with Scripts
 
 ```bash
 # Install and set up Vox Biblios
 ./setup_voxbiblios.sh
 
-# Run Vox Biblios
+# Run Vox Biblios (automatically activates venv)
 ./run_voxbiblios.sh [command]
 ```
 
-### Manual Installation with uv
-
-If you prefer a manual installation:
+#### Manual Setup with uv
 
 ```bash
 # Create and activate a virtual environment
@@ -55,16 +108,67 @@ source .venv/bin/activate
 
 # Install in development mode
 uv sync
+
+# Use the command (within activated venv)
+vox-biblios [command]
 ```
 
 ## Configuration
 
-Vox Biblios reads configuration from environment variables. Create a `.env.local` file in the project root and add your settings:
+Vox Biblios reads configuration from environment variables and config files. Configuration files are searched in the following priority order:
+
+1. `./.env.local` (current directory - for development)
+2. `~/.config/vox-biblios/config.env` (XDG config directory - recommended for global install)
+3. `~/.vox-biblios.env` (home directory - alternative location)
+4. Environment variables already set in your shell
+
+### Quick Configuration Setup
+
+For global installation, use the interactive config initialization:
 
 ```bash
-touch .env.local
-nano .env.local  # Edit with your configuration
+vox-biblios config init
 ```
+
+This will guide you through setting up your configuration file at `~/.config/vox-biblios/config.env`.
+
+### Manual Configuration
+
+Create a configuration file in one of the locations above:
+
+```bash
+# For global installation (recommended)
+mkdir -p ~/.config/vox-biblios
+nano ~/.config/vox-biblios/config.env
+
+# OR for development (project directory)
+nano .env.local
+```
+
+Add your configuration settings:
+
+```bash
+# Required
+AWS_ACCESS_KEY=your_access_key_here
+AWS_SECRET_KEY=your_secret_key_here
+
+# Optional (with defaults shown)
+AWS_REGION=us-east-1
+S3_BUCKET=vox-biblios
+POLLY_VOICE_ID=Joanna
+PODCAST_NAME=Vox Biblios
+PODCAST_WEBSITE=vox-biblios.example.com
+```
+
+### Configuration Management Commands
+
+```bash
+vox-biblios config show  # Show where configuration is loaded from
+vox-biblios config init  # Interactive configuration setup
+vox-biblios config edit  # Edit configuration in your default editor
+```
+
+### Available Configuration Variables
 
 Required environment variables:
 
@@ -160,17 +264,25 @@ This URL can be added to podcast players to subscribe to your generated podcast.
 
 ### Scripting and Automation
 
-Vox Biblios can be integrated into automation pipelines. Use the `vox-biblios` CLI in shell scripts to process new text and update your feed.
+Vox Biblios can be integrated into automation pipelines. When installed globally, you can use the `vox-biblios` command directly in shell scripts without any virtual environment setup.
 
 ```bash
 #!/bin/bash
 # nightly.sh - run from cron or other schedulers
 set -e
 
-# Navigate to the Vox Biblios project
-cd /path/to/vox-biblios
+# Process a folder of new articles
+vox-biblios process /data/new-articles
+```
 
-# Activate the environment and process a folder of new articles
+For development installations, use the provided wrapper script:
+
+```bash
+#!/bin/bash
+# nightly.sh - for development setup
+set -e
+
+cd /path/to/vox-biblios
 ./run_voxbiblios.sh process /data/new-articles
 ```
 
