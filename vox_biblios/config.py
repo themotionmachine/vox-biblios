@@ -38,7 +38,7 @@ class AppConfig:
     podcast_description: str = "I speak with the voices of all the words I've seen."
     podcast_website: str = "example.org"
     podcast_explicit: bool = False
-    podcast_image: str 
+    podcast_image: Optional[str] = None 
 
 
 class Config:
