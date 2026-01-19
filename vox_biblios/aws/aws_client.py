@@ -59,8 +59,49 @@ class AWSClientFactory:
 
 # Convenience methods for common services
 def get_s3_client():
-    """Get an S3 client."""
+    """Get an S3 client (for AWS S3 only, e.g., Polly output)."""
     return AWSClientFactory.get_client("s3")
+
+
+def get_storage_client():
+    """
+    Get a storage client for S3-compatible object storage.
+
+    This returns a boto3 S3 client configured for the storage provider
+    specified in config (S3, Cloudflare R2, or Backblaze B2).
+
+    Returns:
+        Configured boto3 S3 client for the storage provider
+    """
+    try:
+        storage_config = config.storage
+        storage_config.validate()
+
+        client_kwargs = {
+            "aws_access_key_id": storage_config.access_key,
+            "aws_secret_access_key": storage_config.secret_key,
+        }
+
+        # Add endpoint URL for non-S3 providers
+        if storage_config.endpoint_url:
+            client_kwargs["endpoint_url"] = storage_config.endpoint_url
+
+        # Set region (R2 uses 'auto', B2 uses specific regions)
+        if storage_config.region:
+            client_kwargs["region_name"] = storage_config.region
+
+        client = boto3.client("s3", **client_kwargs)
+
+        logger.debug(
+            f"Created storage client for provider: {storage_config.provider} "
+            f"(endpoint: {storage_config.endpoint_url or 'default'})"
+        )
+        return client
+
+    except (ClientError, ValueError) as e:
+        error_msg = f"Failed to create storage client: {str(e)}"
+        logger.error(error_msg)
+        raise AWSClientError(error_msg) from e
 
 
 def get_polly_client():

@@ -1,5 +1,7 @@
 """
-AWS S3 service integration for file storage.
+S3-compatible storage service for file storage.
+
+Supports AWS S3, Cloudflare R2, Backblaze B2, and other S3-compatible providers.
 """
 from typing import Optional, Union, List, Dict, Any
 from pathlib import Path
@@ -10,7 +12,7 @@ import backoff
 
 from botocore.exceptions import ClientError
 
-from vox_biblios.aws.aws_client import get_s3_client
+from vox_biblios.aws.aws_client import get_storage_client
 from vox_biblios.config import config
 from vox_biblios.utils.logging import get_logger
 from vox_biblios.exceptions import S3Error
@@ -19,19 +21,23 @@ logger = get_logger(__name__)
 
 
 class S3Service:
-    """Service for AWS S3 storage operations."""
-    
+    """Service for S3-compatible storage operations (S3, R2, B2)."""
+
     def __init__(self, bucket_name: Optional[str] = None):
         """
-        Initialize the S3 service.
-        
+        Initialize the storage service.
+
         Args:
-            bucket_name: S3 bucket name (default from config)
+            bucket_name: Bucket name (default from storage config)
         """
-        self.bucket_name = bucket_name or config.aws.s3_bucket
-        self.client = get_s3_client()
-        
-        logger.debug(f"Initialized S3Service with bucket_name={self.bucket_name}")
+        self.bucket_name = bucket_name or config.storage.bucket
+        self.client = get_storage_client()
+        self.storage_config = config.storage
+
+        logger.debug(
+            f"Initialized S3Service with bucket_name={self.bucket_name}, "
+            f"provider={self.storage_config.provider}"
+        )
     
     def upload_file(self, 
                     file_path: Union[str, Path], 
@@ -63,12 +69,12 @@ class S3Service:
         
         try:
             self._upload_file_with_retry(file_path, object_key, content_type)
-            
-            # Return the S3 URL
-            s3_url = f"https://s3.{config.aws.region}.amazonaws.com/{self.bucket_name}/{object_key}"
-            logger.info(f"File uploaded successfully to {s3_url}")
-            
-            return s3_url
+
+            # Return the public URL using storage config
+            public_url = self.storage_config.get_public_url(object_key)
+            logger.info(f"File uploaded successfully to {public_url}")
+
+            return public_url
             
         except Exception as e:
             error_msg = f"Failed to upload file {file_path} to S3: {str(e)}"

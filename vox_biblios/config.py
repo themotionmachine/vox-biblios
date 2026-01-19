@@ -53,12 +53,62 @@ def get_config_sources():
     return _config_sources
 
 @dataclass
+class StorageConfig:
+    """Storage configuration for S3-compatible object storage (S3, R2, B2)."""
+    provider: str = "s3"  # "s3", "r2", or "b2"
+    endpoint_url: Optional[str] = None  # Custom endpoint for R2/B2
+    access_key: Optional[str] = None  # Storage-specific access key
+    secret_key: Optional[str] = None  # Storage-specific secret key
+    bucket: str = "vox-biblios"
+    public_url: Optional[str] = None  # Public URL base for file access
+    region: str = "auto"  # Region for the storage provider
+
+    def validate(self):
+        """Validate storage configuration."""
+        if self.provider not in ("s3", "r2", "b2"):
+            raise ValueError(f"Invalid storage provider: {self.provider}. Must be 's3', 'r2', or 'b2'")
+
+        if self.provider in ("r2", "b2") and not self.endpoint_url:
+            raise ValueError(f"STORAGE_ENDPOINT_URL is required for {self.provider} provider")
+
+        if not self.access_key or not self.secret_key:
+            raise ValueError("STORAGE_ACCESS_KEY and STORAGE_SECRET_KEY must be set")
+
+    def get_public_url(self, object_key: str) -> str:
+        """
+        Get the public URL for an object.
+
+        Args:
+            object_key: The object key in the bucket
+
+        Returns:
+            Public URL for the object
+        """
+        if self.public_url:
+            # Use custom public URL (e.g., custom domain or CDN)
+            base = self.public_url.rstrip('/')
+            return f"{base}/{object_key}"
+        elif self.provider == "s3":
+            # Standard S3 URL format
+            return f"https://s3.{self.region}.amazonaws.com/{self.bucket}/{object_key}"
+        elif self.provider == "r2":
+            # R2 public URL (requires public bucket or custom domain)
+            # Users should set STORAGE_PUBLIC_URL for R2
+            raise ValueError("STORAGE_PUBLIC_URL must be set for R2 provider")
+        elif self.provider == "b2":
+            # B2 public URL format
+            return f"https://f002.backblazeb2.com/file/{self.bucket}/{object_key}"
+        else:
+            raise ValueError(f"Unknown storage provider: {self.provider}")
+
+
+@dataclass
 class AWSConfig:
-    """AWS configuration settings."""
+    """AWS configuration settings (for Polly and other AWS services)."""
     access_key: Optional[str] = None
     secret_key: Optional[str] = None
     region: str = "us-east-1"
-    s3_bucket: str = "vox-biblios"
+    s3_bucket: str = "vox-biblios"  # Still used for Polly output
     polly_engine: str = "neural"
     polly_format: str = "mp3"
     polly_voice_id: str = "Joanna"
@@ -90,7 +140,8 @@ class Config:
     """Main configuration class."""
     aws: AWSConfig
     app: AppConfig
-    
+    storage: StorageConfig
+
     def __init__(self):
         """Initialize configuration from environment variables."""
         # Load AWS credentials (optional during init, validated when used)
@@ -107,6 +158,19 @@ class Config:
             polly_format=os.environ.get("POLLY_FORMAT", "mp3"),
             polly_voice_id=os.environ.get("POLLY_VOICE_ID", "Joanna"),
             polly_output_key_prefix=os.environ.get("POLLY_KEY_PREFIX", "audio")
+        )
+
+        # Initialize storage configuration
+        # Defaults to S3 with AWS credentials for backward compatibility
+        storage_provider = os.environ.get("STORAGE_PROVIDER", "s3")
+        self.storage = StorageConfig(
+            provider=storage_provider,
+            endpoint_url=os.environ.get("STORAGE_ENDPOINT_URL"),
+            access_key=os.environ.get("STORAGE_ACCESS_KEY", aws_access_key),
+            secret_key=os.environ.get("STORAGE_SECRET_KEY", aws_secret_key),
+            bucket=os.environ.get("STORAGE_BUCKET", os.environ.get("S3_BUCKET", "vox-biblios")),
+            public_url=os.environ.get("STORAGE_PUBLIC_URL"),
+            region=os.environ.get("STORAGE_REGION", os.environ.get("AWS_REGION", "us-east-1") if storage_provider == "s3" else "auto")
         )
         
         # Initialize application configuration
@@ -131,7 +195,7 @@ class Config:
     @property
     def get_rss_url(self) -> str:
         """Get the full URL for the RSS feed."""
-        return f"https://s3.{self.aws.region}.amazonaws.com/{self.aws.s3_bucket}/{self.app.rss_filename}"
+        return self.storage.get_public_url(self.app.rss_filename)
 
 
 # Lazy-loaded singleton configuration instance
