@@ -4,6 +4,7 @@ Command line interface for Vox Biblios.
 import argparse
 import sys
 import textwrap
+import warnings
 from typing import List, Optional
 import os
 from pathlib import Path
@@ -13,6 +14,8 @@ from colorama import init, Fore, Style
 from vox_biblios.core.podcast_manager import PodcastManager
 from vox_biblios.utils.logging import get_logger, SoundWaveAnimation
 from vox_biblios.config import config, get_config_sources
+from vox_biblios.tts import create_provider, get_available_providers
+from vox_biblios.exceptions import ProviderNotFoundError
 
 # Initialize colorama for cross-platform colored terminal output
 init()
@@ -35,13 +38,15 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""
         Examples:
-          vox-biblios                           # Process all text files in the default text-q directory
+          vox-biblios                           # Process text files with default provider (pocket-tts)
           vox-biblios process texts/            # Process all text files in the texts/ directory
-          vox-biblios process https://example.com/  # Process content from URL
+          vox-biblios process --provider polly  # Use AWS Polly for TTS
+          vox-biblios process --provider say    # Use macOS 'say' for TTS
+          vox-biblios process --voice marius    # Use specific voice
+          vox-biblios voices                    # List available voices for each provider
           vox-biblios clear                     # Clear the podcast feed
           vox-biblios cost                      # Show AWS cost estimate
           vox-biblios config init               # Initialize configuration file
-          vox-biblios config show               # Show configuration sources
         """)
     )
     
@@ -62,9 +67,22 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help='Enable verbose output'
     )
     process_parser.add_argument(
+        '--provider',
+        type=str,
+        choices=['pocket-tts', 'polly', 'say'],
+        default=None,
+        help='TTS provider to use (default: pocket-tts)'
+    )
+    process_parser.add_argument(
+        '--voice',
+        type=str,
+        default=None,
+        help='Voice to use for TTS (provider-specific)'
+    )
+    process_parser.add_argument(
         '--use-local-speech',
         action='store_true',
-        help='Use macOS "say" command instead of AWS Polly for text-to-speech'
+        help='DEPRECATED: Use --provider say instead'
     )
     
     # Clear command
@@ -94,6 +112,16 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     config_subparsers.add_parser('show', help='Show configuration sources')
     config_subparsers.add_parser('edit', help='Edit configuration file')
 
+    # Voices command
+    voices_parser = subparsers.add_parser('voices', help='List available TTS voices')
+    voices_parser.add_argument(
+        '--provider',
+        type=str,
+        choices=['pocket-tts', 'polly', 'say'],
+        default=None,
+        help='Show voices for a specific provider only'
+    )
+
     # Parse args
     return parser.parse_args(args)
 
@@ -101,19 +129,19 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
 def process_command(args: argparse.Namespace) -> int:
     """
     Execute process command.
-    
+
     Args:
         args: Command line arguments
-        
+
     Returns:
         Exit code
     """
-    print(Fore.CYAN + "🎙 Vox Biblios: Processing input source" + Style.RESET_ALL)
-    
+    print(Fore.CYAN + "Vox Biblios: Processing input source" + Style.RESET_ALL)
+
     try:
         # Validate input source
         input_source = args.input
-        
+
         if input_source.startswith(('http://', 'https://')):
             print(f"Processing content from URL: {input_source}")
         else:
@@ -126,36 +154,50 @@ def process_command(args: argparse.Namespace) -> int:
                 except Exception as e:
                     print(Fore.RED + f"Error: Could not create folder {input_source}: {str(e)}" + Style.RESET_ALL)
                     return 1
-            
+
             print(f"Processing text files from folder: {input_source}")
-        
-        # Create and use podcast manager
+
+        # Handle deprecated --use-local-speech
+        provider = getattr(args, 'provider', None)
+        voice = getattr(args, 'voice', None)
         use_local_speech = getattr(args, 'use_local_speech', False)
-        manager = PodcastManager(use_local_speech=use_local_speech)
-        
+
+        if use_local_speech:
+            print(Fore.YELLOW + "Warning: --use-local-speech is deprecated. Use --provider say instead." + Style.RESET_ALL)
+            provider = "say"
+
+        # Show which provider/voice is being used
+        effective_provider = provider or config.tts.default_provider
+        print(f"Using TTS provider: {effective_provider}")
+        if voice:
+            print(f"Using voice: {voice}")
+
+        # Create and use podcast manager
+        manager = PodcastManager(provider=provider, voice=voice)
+
         if not args.verbose:
             # Show animation during processing
             animation = SoundWaveAnimation()
             animation.start()
-        
+
         try:
             rss_url = manager.process_and_update(input_source)
-            
+
             if not args.verbose:
                 animation.stop()
-            
-            print(Fore.GREEN + "✅ Processing completed successfully!" + Style.RESET_ALL)
+
+            print(Fore.GREEN + "Processing completed successfully!" + Style.RESET_ALL)
             print(f"RSS feed available at: {rss_url}")
             return 0
-            
+
         except Exception as e:
             if not args.verbose:
                 animation.stop()
-            
+
             print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
             logger.error(f"Processing failed: {str(e)}", exc_info=True)
             return 1
-            
+
     except Exception as e:
         print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
         logger.error(f"Unexpected error in process command: {str(e)}", exc_info=True)
@@ -429,26 +471,64 @@ PODCAST_EXPLICIT=false
     return 0
 
 
+def voices_command(args: argparse.Namespace) -> int:
+    """
+    Execute voices command - list available TTS voices.
+
+    Args:
+        args: Command line arguments
+
+    Returns:
+        Exit code
+    """
+    print(Fore.CYAN + "Vox Biblios: Available TTS Voices" + Style.RESET_ALL)
+
+    providers_to_show = [args.provider] if args.provider else get_available_providers()
+
+    for provider_name in providers_to_show:
+        print(f"\n{Fore.GREEN}{provider_name}{Style.RESET_ALL}:")
+        try:
+            provider = create_provider(provider_name)
+            voices = provider.get_available_voices()
+            if voices:
+                for voice in voices:
+                    print(f"  - {voice}")
+            else:
+                print("  (no voices available or unable to retrieve)")
+        except ProviderNotFoundError as e:
+            print(f"  {Fore.RED}Error: {e}{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"  {Fore.YELLOW}Unable to load provider: {e}{Style.RESET_ALL}")
+
+    print(f"\n{Fore.YELLOW}Note:{Style.RESET_ALL} Default provider is '{config.tts.default_provider}'")
+    print("Use --provider and --voice flags with the 'process' command to select.")
+
+    return 0
+
+
 def main() -> int:
     """
     Main entry point.
-    
+
     Returns:
         Exit code
     """
     # Parse command line arguments
     args = parse_args()
-    
+
     # If no command is provided, default to 'process' with default input
     if not args.command:
         # Create args for default process command
         parser = argparse.ArgumentParser()
         parser.add_argument('input', default='text-q')
         parser.add_argument('--verbose', action='store_true', default=False)
+        parser.add_argument('--provider', default=None)
+        parser.add_argument('--voice', default=None)
+        parser.add_argument('--use-local-speech', action='store_true', default=False)
         args = parser.parse_args(['text-q'])
         args.command = 'process'
         logger.info("No command specified, defaulting to 'process text-q'")
-    
+
     # Execute the selected command
     if args.command == 'process':
         return process_command(args)
@@ -460,6 +540,8 @@ def main() -> int:
         return version_command(args)
     elif args.command == 'config':
         return config_command(args)
+    elif args.command == 'voices':
+        return voices_command(args)
     else:
         print(Fore.RED + f"Error: Unknown command: {args.command}" + Style.RESET_ALL)
         return 1

@@ -5,7 +5,7 @@ This package allows users to convert text files or web content into podcast epis
 and publish them to an RSS feed.
 """
 
-__version__ = "1.0.0"
+__version__ = "0.2.1"
 __author__ = "themotionmachine"
 __all__ = ["config", "cli"]
 

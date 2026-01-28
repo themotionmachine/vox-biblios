@@ -71,6 +71,19 @@ class AWSConfig:
 
 
 @dataclass
+class PocketTTSConfig:
+    """Pocket TTS configuration settings."""
+    voice: str = "alba"
+
+
+@dataclass
+class TTSConfig:
+    """TTS provider configuration settings."""
+    default_provider: str = "pocket-tts"
+    default_voice: Optional[str] = None  # None means use provider default
+
+
+@dataclass
 class AppConfig:
     """Application configuration settings."""
     log_level: int = logging.INFO
@@ -90,7 +103,9 @@ class Config:
     """Main configuration class."""
     aws: AWSConfig
     app: AppConfig
-    
+    tts: TTSConfig
+    pocket_tts: PocketTTSConfig
+
     def __init__(self):
         """Initialize configuration from environment variables."""
         # Load AWS credentials (optional during init, validated when used)
@@ -121,11 +136,22 @@ class Config:
             preview_length=int(os.environ.get("PREVIEW_LENGTH", "100")),
             rss_filename=os.environ.get("RSS_FILENAME", "voxbiblios.rss"),
             podcast_name=os.environ.get("PODCAST_NAME", "Vox Biblios"),
-            podcast_description=os.environ.get("PODCAST_DESCRIPTION", 
+            podcast_description=os.environ.get("PODCAST_DESCRIPTION",
                                                "I speak with the voices of all the words I've seen."),
             podcast_website=os.environ.get("PODCAST_WEBSITE", "vox-biblios.example.com"),
             podcast_explicit=os.environ.get("PODCAST_EXPLICIT", "").lower() == "true",
             podcast_image=os.environ.get("PODCAST_IMAGE")
+        )
+
+        # Initialize TTS configuration
+        self.tts = TTSConfig(
+            default_provider=os.environ.get("TTS_PROVIDER", "pocket-tts"),
+            default_voice=os.environ.get("TTS_VOICE") or None
+        )
+
+        # Initialize Pocket TTS configuration
+        self.pocket_tts = PocketTTSConfig(
+            voice=os.environ.get("POCKET_TTS_VOICE", "alba")
         )
     
     @property

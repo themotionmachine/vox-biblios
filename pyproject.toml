@@ -4,34 +4,37 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vox-biblios"
-version = "0.1.0"
+version = "0.2.1"
 description = "Text-to-Podcast Generator"
 requires-python = ">=3.10"
 dependencies = [
     # Core dependencies
     "colorama",
     "python-dotenv",
-    
+
     # AWS related
     "boto3",
     "botocore",
     "backoff",
-    
+
     # Text processing
     "nltk",
-    
+
     # Web scraping
     "goose3",
     "requests",
     "beautifulsoup4",
     "trafilatura",
-    
+
     # Podcast/RSS
     "podgen",
     "xmltodict",
-    
+
     # Data processing
     "pandas",
+
+    # TTS
+    "pocket-tts>=0.1.0",
 ]
 
 [project.scripts]

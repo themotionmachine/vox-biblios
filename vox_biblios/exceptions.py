@@ -50,3 +50,28 @@ class WebScraperError(VoxBibliosError):
 class PodcastManagerError(VoxBibliosError):
     """Exception raised for podcast manager errors."""
     pass
+
+
+class TTSError(VoxBibliosError):
+    """Base exception for TTS-related errors."""
+    pass
+
+
+class ProviderNotFoundError(TTSError):
+    """Exception raised when a TTS provider is not found."""
+    pass
+
+
+class VoiceNotFoundError(TTSError):
+    """Exception raised when a voice is not found for a provider."""
+    pass
+
+
+class ModelLoadError(TTSError):
+    """Exception raised when a TTS model fails to load."""
+    pass
+
+
+class SynthesisError(TTSError):
+    """Exception raised when speech synthesis fails."""
+    pass

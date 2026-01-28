@@ -5,7 +5,10 @@ A personal text-to-podcast generator that converts text files and web content in
 ## Features
 
 - **Text-to-Podcast Conversion**: Process text files or web content into audio podcast episodes
-- **Local and AWS TTS**: Uses macOS `say` for quick, offline generation (macOS only) with automatic AIFF to M4A conversion, and AWS Polly neural voices for cross-platform support
+- **Multiple TTS Providers**:
+  - **Pocket TTS** (default): High-quality local neural TTS with multiple voices (alba, marius, javert, jean, fantine, cosette, eponine, azelma)
+  - **AWS Polly**: Cloud-based neural TTS with many voice options
+  - **macOS Say**: Quick local generation using built-in macOS speech synthesis
 - **RSS Feed Generation**: Automatically generate and update an RSS feed for podcast distribution
 - **Text Previews**: Includes text previews in episode descriptions for better context
 - **Cost Monitoring**: Built-in AWS cost estimation and monitoring
@@ -19,17 +22,18 @@ A personal text-to-podcast generator that converts text files and web content in
 ### Prerequisites
 
 - Python 3.10 or higher
-- AWS account with Polly and S3 access (in order to use AWS Polly)
+- **ffmpeg**: Required for Pocket TTS audio conversion (`brew install ffmpeg` on macOS)
+- AWS account with S3 access (required for storing audio files)
 - AWS credentials configured
 
 ### Platform-Specific Features
 
-**macOS only:**
-- `--use-local-speech` flag requires macOS with `say` and `afconvert` commands
-- These are included by default on macOS
-
 **All platforms:**
-- AWS Polly text-to-speech (requires AWS account and credentials)
+- Pocket TTS (default): Local neural TTS, requires ffmpeg for WAV to MP3 conversion
+- AWS Polly: Cloud TTS (requires AWS account and credentials)
+
+**macOS only:**
+- `--provider say` uses macOS built-in `say` and `afconvert` commands
 
 ### Global Installation (Recommended)
 
@@ -175,10 +179,16 @@ Required environment variables:
 - `AWS_ACCESS_KEY`: Your AWS access key
 - `AWS_SECRET_KEY`: Your AWS secret key
 
+TTS configuration:
+
+- `TTS_PROVIDER`: Default TTS provider (default: pocket-tts). Options: pocket-tts, polly, say
+- `TTS_VOICE`: Default voice for TTS (provider-specific)
+- `POCKET_TTS_VOICE`: Default voice for Pocket TTS (default: alba). Options: alba, marius, javert, jean, fantine, cosette, eponine, azelma
+
 Optional environment variables:
 
 - `PREVIEW_LENGTH`: Number of text characters to include in episode descriptions (default: 100)
-- `CHUNK_SIZE`: Maximum character size for Polly text chunks (default: 90000)
+- `CHUNK_SIZE`: Maximum character size for text chunks (default: 90000)
 - `AWS_REGION`: AWS region to use (default: us-east-1)
 - `S3_BUCKET`: S3 bucket for storing audio files (default: vox-biblios)
 - `POLLY_VOICE_ID`: AWS Polly voice to use (default: Joanna)
@@ -206,7 +216,7 @@ vox-biblios  # Processes text-q/ directory
 
 ### Basic Commands
 
-Process text files in a directory:
+Process text files in a directory (uses Pocket TTS by default):
 
 ```bash
 vox-biblios process path/to/text/files/
@@ -218,11 +228,41 @@ Process content from a URL:
 vox-biblios process https://example.com/article
 ```
 
-Process using macOS "say" command instead of AWS Polly:
+### TTS Provider Selection
+
+Use a specific TTS provider:
 
 ```bash
-vox-biblios process --use-local-speech path/to/text/files/
+# Use Pocket TTS (default) - local neural TTS
+vox-biblios process path/to/text/files/
+
+# Use AWS Polly - cloud neural TTS
+vox-biblios process --provider polly path/to/text/files/
+
+# Use macOS say - local system TTS (macOS only)
+vox-biblios process --provider say path/to/text/files/
 ```
+
+Select a specific voice:
+
+```bash
+# Use a different Pocket TTS voice
+vox-biblios process --voice marius path/to/text/files/
+
+# Use a specific Polly voice
+vox-biblios process --provider polly --voice Matthew path/to/text/files/
+```
+
+List available voices for all providers:
+
+```bash
+vox-biblios voices
+
+# Or for a specific provider
+vox-biblios voices --provider pocket-tts
+```
+
+### Other Commands
 
 Clear the podcast feed:
 
@@ -245,8 +285,10 @@ vox-biblios version
 ### Command Options
 
 **Process Command Options:**
-- `--use-local-speech`: Use macOS "say" command instead of AWS Polly for text-to-speech generation. This option allows you to generate audio locally without AWS costs, though the audio quality may differ from AWS Polly's neural voices.
+- `--provider {pocket-tts,polly,say}`: TTS provider to use (default: pocket-tts)
+- `--voice VOICE`: Voice to use for TTS (provider-specific)
 - `-v, --verbose`: Enable verbose output for debugging
+- `--use-local-speech`: DEPRECATED - use `--provider say` instead
 
 ### Text File Format
 
@@ -295,6 +337,7 @@ Schedule this script with `cron` or another job runner to automatically convert 
 Vox Biblios follows a modular architecture:
 
 - **Core**: Central podcast manager and text processing
+- **TTS**: Unified TTS provider interface with implementations for Pocket TTS, AWS Polly, and macOS Say
 - **AWS**: Integration with AWS services (Polly, S3, Cost Explorer)
 - **Adapters**: External service integrations (RSS, web scraper)
 - **Utils**: Shared utilities (logging, helpers)

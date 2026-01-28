@@ -6,143 +6,164 @@ from pathlib import Path
 import os
 from datetime import datetime, timezone
 import time
-import subprocess
-import tempfile
+import warnings
 from urllib.parse import urlparse
 
 from vox_biblios.config import config
 from vox_biblios.utils.logging import get_logger, SoundWaveAnimation
 from vox_biblios.core.text_processor import TextProcessor
-from vox_biblios.aws.polly import PollyService
 from vox_biblios.aws.s3 import S3Service
 from vox_biblios.adapters.rss import PodcastRSSManager
 from vox_biblios.adapters.web_scraper import WebScraper
-from vox_biblios.exceptions import PodcastManagerError
+from vox_biblios.exceptions import PodcastManagerError, SynthesisError
+from vox_biblios.tts import create_provider, TTSProvider, TTSResult
 
 logger = get_logger(__name__)
 
 
 class PodcastManager:
     """Central manager for Vox Biblios podcast generator."""
-    
-    def __init__(self, use_local_speech: bool = False):
+
+    def __init__(
+        self,
+        provider: Optional[str] = None,
+        voice: Optional[str] = None,
+        use_local_speech: bool = False,
+    ):
         """Initialize the podcast manager with all necessary components.
-        
+
         Args:
-            use_local_speech: If True, use macOS "say" command instead of AWS Polly
+            provider: TTS provider name ('pocket-tts', 'polly', 'say'). Default from config.
+            voice: Voice to use for TTS. Default from config or provider default.
+            use_local_speech: DEPRECATED. Use provider='say' instead.
         """
         self.text_processor = TextProcessor()
-        self.polly_service = PollyService()
         self.s3_service = S3Service()
         self.rss_manager = PodcastRSSManager()
         self.web_scraper = WebScraper()
         self.animation = SoundWaveAnimation()
-        self.use_local_say = use_local_speech
-        
-        logger.debug(f"Initialized PodcastManager (use_local_say={use_local_speech})")
+
+        # Handle deprecated use_local_speech parameter
+        if use_local_speech:
+            warnings.warn(
+                "use_local_speech is deprecated. Use provider='say' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            provider = "say"
+
+        # Determine provider and voice
+        self._provider_name = provider or config.tts.default_provider
+        self._voice = voice or config.tts.default_voice
+
+        # Create TTS provider
+        self._tts_provider: TTSProvider = create_provider(self._provider_name, self._voice)
+
+        logger.debug(
+            f"Initialized PodcastManager (provider={self._provider_name}, voice={self._voice})"
+        )
+
+    def _synthesize_chunk(self, text: str, title: str) -> Optional[TTSResult]:
+        """
+        Synthesize a text chunk using the configured TTS provider.
+
+        Args:
+            text: The text to synthesize
+            title: Title/identifier for this chunk
+
+        Returns:
+            TTSResult on success, None on failure
+        """
+        try:
+            result = self._tts_provider.synthesize(text, title)
+            return result
+        except SynthesisError as e:
+            logger.error(f"Synthesis failed for '{title}': {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error synthesizing '{title}': {e}")
+            return None
     
     def process_texts_from_folder(self, folder_path: Union[str, Path]) -> List[Dict[str, Any]]:
         """
         Process all text files in a folder.
-        
+
         Args:
             folder_path: Path to folder containing text files
-            
+
         Returns:
             List of episode data dictionaries
-            
+
         Raises:
             PodcastManagerError: If processing fails
         """
         logger.info(f"Processing texts from folder: {folder_path}")
         self.animation.start()
-        
+
         try:
             # Process texts
             processed_texts = self.text_processor.process_folder(folder_path)
-            
+
             if not processed_texts:
                 logger.warning(f"No text files found in {folder_path}")
                 self.animation.stop()
                 return []
-            
+
             results = []
-            
+
             # Process each text
             for filename, text in processed_texts.items():
                 logger.info(f"Processing file: {filename}")
-                
+
                 # Split text into chunks
                 chunks = self.text_processor.chunk(text)
                 logger.info(f"Split {filename} into {len(chunks)} chunks")
-                
-                say_count = 0
-                polly_count = 0
+
+                success_count = 0
                 # Process each chunk
                 for i, chunk in enumerate(chunks):
                     chunk_title = f"{filename} (Part {i+1})" if len(chunks) > 1 else filename
-                    if self.use_local_say:
-                        logger.info(f"Sending chunk {i+1}/{len(chunks)} using say")
-                        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp_in:
-                            tmp_in.write(chunk)
-                            input_file = tmp_in.name
-                        aiff_file = input_file.replace('.txt', '.aiff')
-                        m4a_file = input_file.replace('.txt', '.m4a')
-                        cmd = ['say', '-f', input_file, '-o', aiff_file]
-                        result = subprocess.run(cmd, capture_output=True)
-                        if result.returncode != 0:
-                            logger.error(f"Failed say for chunk {i+1}/{len(chunks)}: {result.stderr.decode()}")
-                            os.remove(input_file)
-                            continue
+                    logger.info(
+                        f"Synthesizing chunk {i+1}/{len(chunks)} with {self._provider_name}"
+                    )
 
-                        # Convert AIFF to M4A
-                        af_cmd = ['afconvert', '-f', 'm4af', '-d', 'aac', '-o', m4a_file, aiff_file]
-                        af_result = subprocess.run(af_cmd, capture_output=True)
-                        if af_result.returncode != 0:
-                            logger.error(f"Failed to convert AIFF to M4A for chunk {i+1}/{len(chunks)}: {af_result.stderr.decode()}")
-                            os.remove(input_file)
-                            os.remove(aiff_file)
-                            continue
+                    tts_result = self._synthesize_chunk(chunk, chunk_title)
 
-                        uploaded_url = self.s3_service.upload_file(m4a_file)
-                        response = {'SynthesisTask': {'OutputUri': uploaded_url}}
-                        os.remove(input_file)
-                        os.remove(aiff_file)
-                        os.remove(m4a_file)
-                        say_count += 1
-                    else:
-                        logger.info(f"Sending chunk {i+1}/{len(chunks)} to Polly")
-                        response = self.polly_service.synthesize_speech(chunk)
-                        if response:
-                            polly_count += 1
-
-                    if response:
+                    if tts_result:
                         timestamp = datetime.now(timezone.utc)
-                        
+
                         # Add text preview to description using configured preview length
                         preview_length = config.app.preview_length
-                        text_preview = chunk[:preview_length].strip() + "..." if len(chunk) > preview_length else chunk.strip()
+                        text_preview = (
+                            chunk[:preview_length].strip() + "..."
+                            if len(chunk) > preview_length
+                            else chunk.strip()
+                        )
                         episode_data = {
                             'title': chunk_title,
-                            'url': response['SynthesisTask']['OutputUri'],
+                            'url': tts_result.audio_url,
                             'description': f"Generated from {filename}\n\nPreview: {text_preview}",
                             'pubDate': timestamp
                         }
                         results.append(episode_data)
+                        success_count += 1
                         logger.info(f"Successfully processed chunk {i+1}/{len(chunks)}")
                         time.sleep(1)
                     else:
                         logger.error(f"Failed to process chunk {i+1}/{len(chunks)}")
-                logger.info(f"Processed {len(chunks)} chunks: {say_count} using say, {polly_count} using Polly")
-            
+
+                logger.info(
+                    f"Processed {len(chunks)} chunks: {success_count} successful using {self._provider_name}"
+                )
+
             # Clean up processed files
             if results:
                 self.text_processor.delete_processed_files(folder_path)
-            
+
             logger.info(f"Processed {len(results)} chunks from {len(processed_texts)} files")
             self.animation.stop()
             return results
-            
+
         except Exception as e:
             self.animation.stop()
             error_msg = f"Failed to process texts from folder {folder_path}: {str(e)}"
@@ -152,28 +173,28 @@ class PodcastManager:
     def process_url(self, url: str) -> List[Dict[str, Any]]:
         """
         Process content from a URL.
-        
+
         Args:
             url: URL to process
-            
+
         Returns:
             List of episode data dictionaries
-            
+
         Raises:
             PodcastManagerError: If processing fails
         """
         logger.info(f"Processing content from URL: {url}")
         self.animation.start()
-        
+
         try:
             # Extract content from URL
             content = self.web_scraper.extract_content(url)
-            
+
             if not content or not content.get('text'):
                 logger.warning(f"No content extracted from {url}")
                 self.animation.stop()
                 return []
-            
+
             # Get title with fallbacks
             title = content.get('title', '')
             if not title:
@@ -186,80 +207,58 @@ class PodcastManager:
                 else:
                     # Last resort: use domain name
                     title = parsed_url.netloc.replace('www.', '')
-            
+
             # Preprocess text
             text = self.text_processor.preprocess(content['text'])
-            
+
             # Split text into chunks
             chunks = self.text_processor.chunk(text)
             logger.info(f"Split content from {url} into {len(chunks)} chunks")
-            
+
             results = []
-            
-            say_count = 0
-            polly_count = 0
+
+            success_count = 0
             # Process each chunk
             for i, chunk in enumerate(chunks):
                 chunk_title = f"{title} (Part {i+1})" if len(chunks) > 1 else title
-                if self.use_local_say:
-                    logger.info(f"Sending chunk {i+1}/{len(chunks)} using say")
-                    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp_in:
-                        tmp_in.write(chunk)
-                        input_file = tmp_in.name
-                    aiff_file = input_file.replace('.txt', '.aiff')
-                    m4a_file = input_file.replace('.txt', '.m4a')
-                    cmd = ['say', '-f', input_file, '-o', aiff_file]
-                    result = subprocess.run(cmd, capture_output=True)
-                    if result.returncode != 0:
-                        logger.error(f"Failed say for chunk {i+1}/{len(chunks)}: {result.stderr.decode()}")
-                        os.remove(input_file)
-                        continue
+                logger.info(
+                    f"Synthesizing chunk {i+1}/{len(chunks)} with {self._provider_name}"
+                )
 
-                    # Convert AIFF to M4A
-                    af_cmd = ['afconvert', '-f', 'm4af', '-d', 'aac', '-o', m4a_file, aiff_file]
-                    af_result = subprocess.run(af_cmd, capture_output=True)
-                    if af_result.returncode != 0:
-                        logger.error(f"Failed to convert AIFF to M4A for chunk {i+1}/{len(chunks)}: {af_result.stderr.decode()}")
-                        os.remove(input_file)
-                        os.remove(aiff_file)
-                        continue
+                tts_result = self._synthesize_chunk(chunk, chunk_title)
 
-                    uploaded_url = self.s3_service.upload_file(m4a_file)
-                    response = {'SynthesisTask': {'OutputUri': uploaded_url}}
-                    os.remove(input_file)
-                    os.remove(aiff_file)
-                    os.remove(m4a_file)
-                    say_count += 1
-                else:
-                    logger.info(f"Sending chunk {i+1}/{len(chunks)} to Polly")
-                    response = self.polly_service.synthesize_speech(chunk)
-                    if response:
-                        polly_count += 1
-
-                if response:
+                if tts_result:
                     timestamp = datetime.now(timezone.utc)
-                    
+
                     # Add text preview to description using configured preview length
                     preview_length = config.app.preview_length
-                    text_preview = chunk[:preview_length].strip() + "..." if len(chunk) > preview_length else chunk.strip()
-                    
+                    text_preview = (
+                        chunk[:preview_length].strip() + "..."
+                        if len(chunk) > preview_length
+                        else chunk.strip()
+                    )
+
                     episode_data = {
                         'title': chunk_title,
-                        'url': response['SynthesisTask']['OutputUri'],
+                        'url': tts_result.audio_url,
                         'description': f"Generated from {url}\n\nPreview: {text_preview}",
                         'pubDate': timestamp
                     }
                     results.append(episode_data)
+                    success_count += 1
                     logger.info(f"Successfully processed chunk {i+1}/{len(chunks)}")
                     time.sleep(1)
                 else:
                     logger.error(f"Failed to process chunk {i+1}/{len(chunks)}")
-            logger.info(f"Processed {len(chunks)} chunks: {say_count} using say, {polly_count} using Polly")
-            
+
+            logger.info(
+                f"Processed {len(chunks)} chunks: {success_count} successful using {self._provider_name}"
+            )
+
             logger.info(f"Processed {len(results)} chunks from URL {url}")
             self.animation.stop()
             return results
-            
+
         except Exception as e:
             self.animation.stop()
             error_msg = f"Failed to process content from URL {url}: {str(e)}"
