@@ -2,23 +2,23 @@
 Command line interface for Vox Biblios.
 """
 import argparse
+import json
 import sys
 import textwrap
-import warnings
 from typing import List, Optional
 import os
 from pathlib import Path
 
 from colorama import init, Fore, Style
 
-from vox_biblios.core.podcast_manager import PodcastManager
 from vox_biblios.utils.logging import get_logger, SoundWaveAnimation
 from vox_biblios.config import config, get_config_sources
 from vox_biblios.tts import create_provider, get_available_providers
 from vox_biblios.exceptions import ProviderNotFoundError
 
-# Initialize colorama for cross-platform colored terminal output
-init()
+# Initialize colorama for cross-platform colored terminal output;
+# strip color codes when stdout is not a terminal (pipes, agents, cron)
+init(strip=not sys.stdout.isatty())
 
 logger = get_logger(__name__)
 
@@ -26,13 +26,15 @@ logger = get_logger(__name__)
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     """
     Parse command line arguments.
-    
+
     Args:
         args: Command line arguments (defaults to sys.argv[1:])
-        
+
     Returns:
         Parsed arguments
     """
+    providers = get_available_providers()
+
     parser = argparse.ArgumentParser(
         description="Vox Biblios: Text-to-Podcast Generator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -40,26 +42,32 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         Examples:
           vox-biblios                           # Process text files with default provider (pocket-tts)
           vox-biblios process texts/            # Process all text files in the texts/ directory
-          vox-biblios process --provider polly  # Use AWS Polly for TTS
-          vox-biblios process --provider say    # Use macOS 'say' for TTS
-          vox-biblios process --voice marius    # Use specific voice
+          vox-biblios process article.txt       # Process a single text file
+          vox-biblios process https://example.com/article  # Process a URL
+          vox-biblios process - < article.txt   # Process text from stdin
+          vox-biblios process --provider kokoro # Use Kokoro (local MLX) for TTS
+          vox-biblios process --output-dir out/ # Local mode: write MP3s, skip AWS/RSS
+          vox-biblios process --dry-run texts/  # Show cleaned text without synthesizing
+          vox-biblios process --json texts/     # Machine-readable output
           vox-biblios voices                    # List available voices for each provider
           vox-biblios clear                     # Clear the podcast feed
           vox-biblios cost                      # Show AWS cost estimate
           vox-biblios config init               # Initialize configuration file
+
+        Exit codes for 'process': 0 = success, 1 = failure, 2 = partial failure
         """)
     )
-    
+
     subparsers = parser.add_subparsers(dest='command', help='Command to execute')
-    
+
     # Process command
-    process_parser = subparsers.add_parser('process', help='Process text files or URL')
+    process_parser = subparsers.add_parser('process', help='Process text files, a single file, a URL, or stdin')
     process_parser.add_argument(
         'input',
         type=str,
         nargs='?',
-        default='text-q',  # Default to text-q folder if not specified
-        help='Input folder containing text files or a URL (default: text-q)'
+        default='text-q',
+        help="Input folder, .txt file, URL, or '-' for stdin (default: text-q)"
     )
     process_parser.add_argument(
         '-v', '--verbose',
@@ -69,9 +77,9 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     process_parser.add_argument(
         '--provider',
         type=str,
-        choices=['pocket-tts', 'polly', 'say'],
+        choices=providers,
         default=None,
-        help='TTS provider to use (default: pocket-tts)'
+        help=f'TTS provider to use (default: {config.tts.default_provider})'
     )
     process_parser.add_argument(
         '--voice',
@@ -80,11 +88,23 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help='Voice to use for TTS (provider-specific)'
     )
     process_parser.add_argument(
-        '--use-local-speech',
-        action='store_true',
-        help='DEPRECATED: Use --provider say instead'
+        '--output-dir',
+        type=str,
+        default=None,
+        metavar='DIR',
+        help='Write MP3s to a local directory and skip S3 upload / RSS update (no AWS needed)'
     )
-    
+    process_parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Print the cleaned text that would be synthesized, then exit'
+    )
+    process_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Emit machine-readable JSON on stdout'
+    )
+
     # Clear command
     clear_parser = subparsers.add_parser('clear', help='Clear podcast feed')
     clear_parser.add_argument(
@@ -92,7 +112,7 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         action='store_true',
         help='Enable verbose output'
     )
-    
+
     # Cost command
     cost_parser = subparsers.add_parser('cost', help='Show AWS cost estimate')
     cost_parser.add_argument(
@@ -101,14 +121,25 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         default=30,
         help='Number of days to include in estimate (default: 30)'
     )
-    
+
     # Version command
     subparsers.add_parser('version', help='Show version information')
 
     # Config command
     config_parser = subparsers.add_parser('config', help='Manage configuration')
     config_subparsers = config_parser.add_subparsers(dest='config_command', help='Configuration command')
-    config_subparsers.add_parser('init', help='Initialize configuration file')
+    init_parser = config_subparsers.add_parser('init', help='Initialize configuration file')
+    init_parser.add_argument('--non-interactive', action='store_true',
+                             help='Write the config from flags without prompting')
+    init_parser.add_argument('--force', action='store_true',
+                             help='Overwrite an existing config file without asking')
+    init_parser.add_argument('--aws-access-key', default=None)
+    init_parser.add_argument('--aws-secret-key', default=None)
+    init_parser.add_argument('--aws-region', default='us-east-1')
+    init_parser.add_argument('--s3-bucket', default='vox-biblios')
+    init_parser.add_argument('--polly-voice', default='Joanna')
+    init_parser.add_argument('--podcast-name', default='Vox Biblios')
+    init_parser.add_argument('--podcast-website', default='vox-biblios.example.com')
     config_subparsers.add_parser('show', help='Show configuration sources')
     config_subparsers.add_parser('edit', help='Edit configuration file')
 
@@ -117,13 +148,81 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     voices_parser.add_argument(
         '--provider',
         type=str,
-        choices=['pocket-tts', 'polly', 'say'],
+        choices=providers,
         default=None,
         help='Show voices for a specific provider only'
     )
 
-    # Parse args
     return parser.parse_args(args)
+
+
+def _resolve_input(input_source: str, json_mode: bool):
+    """Normalize the process input: stdin and single files become a temp folder.
+
+    Returns:
+        (effective_input, is_url) or raises SystemExit-style error via ValueError
+    """
+    import tempfile
+
+    if input_source.startswith(('http://', 'https://')):
+        return input_source, True
+
+    if input_source == '-':
+        text = sys.stdin.read()
+        if not text.strip():
+            raise ValueError("No text received on stdin")
+        temp_dir = tempfile.mkdtemp(prefix='vox-biblios-')
+        (Path(temp_dir) / 'stdin.txt').write_text(text, encoding='utf-8')
+        return temp_dir, False
+
+    path = Path(input_source)
+    if path.is_file():
+        if path.suffix.lower() != '.txt':
+            raise ValueError(f"Only .txt files are supported, got: {path.name}")
+        import shutil
+        temp_dir = tempfile.mkdtemp(prefix='vox-biblios-')
+        shutil.copy(path, Path(temp_dir) / path.name)
+        return temp_dir, False
+
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+        if not json_mode:
+            print(Fore.YELLOW + f"Created input folder: {path}" + Style.RESET_ALL)
+
+    if not path.is_dir():
+        raise ValueError(f"Input is neither a folder, a .txt file, nor a URL: {input_source}")
+
+    return str(path), False
+
+
+def _dry_run(input_source: str, is_url: bool, json_mode: bool) -> int:
+    """Print the cleaned text that would be synthesized."""
+    from vox_biblios.core.text_processor import TextProcessor
+    processor = TextProcessor()
+
+    if is_url:
+        from vox_biblios.adapters.web_scraper import WebScraper
+        content = WebScraper().extract_content(input_source)
+        texts = {content.get('title') or input_source: processor.preprocess(content.get('text', ''))}
+    else:
+        texts = processor.process_folder(input_source)
+
+    if json_mode:
+        payload = {
+            'dry_run': True,
+            'files': [
+                {'name': name, 'cleaned_text': text, 'chars': len(text)}
+                for name, text in texts.items()
+            ]
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        for name, text in texts.items():
+            print(Fore.CYAN + f"--- {name} ({len(text)} chars after cleanup) ---" + Style.RESET_ALL)
+            print(text)
+            print()
+
+    return 0
 
 
 def process_command(args: argparse.Namespace) -> int:
@@ -134,163 +233,169 @@ def process_command(args: argparse.Namespace) -> int:
         args: Command line arguments
 
     Returns:
-        Exit code
+        Exit code (0 = success, 1 = failure, 2 = partial failure)
     """
-    print(Fore.CYAN + "Vox Biblios: Processing input source" + Style.RESET_ALL)
+    from vox_biblios.core.podcast_manager import PodcastManager
+
+    json_mode = args.json
+
+    if not json_mode:
+        print(Fore.CYAN + "Vox Biblios: Processing input source" + Style.RESET_ALL)
 
     try:
-        # Validate input source
-        input_source = args.input
-
-        if input_source.startswith(('http://', 'https://')):
-            print(f"Processing content from URL: {input_source}")
+        effective_input, is_url = _resolve_input(args.input, json_mode)
+    except ValueError as e:
+        if json_mode:
+            print(json.dumps({'status': 'error', 'error': str(e)}))
         else:
-            # Check if folder exists
-            if not os.path.exists(input_source) or not os.path.isdir(input_source):
-                # Create the folder if it doesn't exist
-                try:
-                    os.makedirs(input_source)
-                    print(Fore.YELLOW + f"Created input folder: {input_source}" + Style.RESET_ALL)
-                except Exception as e:
-                    print(Fore.RED + f"Error: Could not create folder {input_source}: {str(e)}" + Style.RESET_ALL)
-                    return 1
+            print(Fore.RED + f"Error: {e}" + Style.RESET_ALL)
+        return 1
 
-            print(f"Processing text files from folder: {input_source}")
+    try:
+        if args.dry_run:
+            return _dry_run(effective_input, is_url, json_mode)
 
-        # Handle deprecated --use-local-speech
-        provider = getattr(args, 'provider', None)
-        voice = getattr(args, 'voice', None)
-        use_local_speech = getattr(args, 'use_local_speech', False)
+        effective_provider = args.provider or config.tts.default_provider
+        if not json_mode:
+            source_desc = "URL" if is_url else "folder"
+            print(f"Processing {source_desc}: {effective_input}")
+            print(f"Using TTS provider: {effective_provider}")
+            if args.voice:
+                print(f"Using voice: {args.voice}")
+            if args.output_dir:
+                print(f"Local mode: writing MP3s to {args.output_dir}")
 
-        if use_local_speech:
-            print(Fore.YELLOW + "Warning: --use-local-speech is deprecated. Use --provider say instead." + Style.RESET_ALL)
-            provider = "say"
+        manager = PodcastManager(
+            provider=args.provider,
+            voice=args.voice,
+            output_dir=args.output_dir,
+        )
 
-        # Show which provider/voice is being used
-        effective_provider = provider or config.tts.default_provider
-        print(f"Using TTS provider: {effective_provider}")
-        if voice:
-            print(f"Using voice: {voice}")
-
-        # Create and use podcast manager
-        manager = PodcastManager(provider=provider, voice=voice)
-
-        if not args.verbose:
-            # Show animation during processing
+        animation = None
+        if not args.verbose and not json_mode:
             animation = SoundWaveAnimation()
             animation.start()
 
         try:
-            rss_url = manager.process_and_update(input_source)
-
-            if not args.verbose:
+            result = manager.process_and_update(effective_input)
+        finally:
+            if animation:
                 animation.stop()
 
-            print(Fore.GREEN + "Processing completed successfully!" + Style.RESET_ALL)
-            print(f"RSS feed available at: {rss_url}")
-            return 0
+        if json_mode:
+            payload = {
+                'status': ['success', 'failure', 'partial'][result.exit_code],
+                'episodes': [
+                    {
+                        'title': ep['title'],
+                        'url': ep['url'],
+                        'description': ep['description'],
+                    }
+                    for ep in result.episodes
+                ],
+                'failures': result.failures,
+                'rss_url': result.rss_url,
+            }
+            print(json.dumps(payload, indent=2))
+        else:
+            for ep in result.episodes:
+                print(Fore.GREEN + f"  ✓ {ep['title']}" + Style.RESET_ALL + f" -> {ep['url']}")
+            for failure in result.failures:
+                print(Fore.RED + f"  ✗ {failure['source']}: {failure['error']}" + Style.RESET_ALL)
 
-        except Exception as e:
-            if not args.verbose:
-                animation.stop()
+            if result.exit_code == 0:
+                print(Fore.GREEN + "Processing completed successfully!" + Style.RESET_ALL)
+            elif result.exit_code == 2:
+                print(Fore.YELLOW + "Processing completed with failures." + Style.RESET_ALL)
+            else:
+                print(Fore.RED + "Processing failed." + Style.RESET_ALL)
 
-            print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
-            logger.error(f"Processing failed: {str(e)}", exc_info=True)
-            return 1
+            if result.rss_url:
+                print(f"RSS feed available at: {result.rss_url}")
+
+        return result.exit_code
 
     except Exception as e:
-        print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
-        logger.error(f"Unexpected error in process command: {str(e)}", exc_info=True)
+        if json_mode:
+            print(json.dumps({'status': 'error', 'error': str(e)}))
+        else:
+            print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
+        logger.error(f"Processing failed: {str(e)}", exc_info=True)
         return 1
 
 
 def clear_command(args: argparse.Namespace) -> int:
     """
     Execute clear command.
-    
+
     Args:
         args: Command line arguments
-        
+
     Returns:
         Exit code
     """
-    print(Fore.CYAN + "🧹 Vox Biblios: Clearing podcast feed" + Style.RESET_ALL)
-    
+    print(Fore.CYAN + "Vox Biblios: Clearing podcast feed" + Style.RESET_ALL)
+
     try:
-        # Create and use podcast manager
-        manager = PodcastManager(use_local_speech=False)
-        
-        try:
-            rss_url = manager.clear_podcast_feed()
-            
-            print(Fore.GREEN + "✅ Podcast feed cleared successfully!" + Style.RESET_ALL)
-            print(f"RSS feed available at: {rss_url}")
-            return 0
-            
-        except Exception as e:
-            print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
-            logger.error(f"Clearing podcast feed failed: {str(e)}", exc_info=True)
-            return 1
-            
+        from vox_biblios.adapters.rss import PodcastRSSManager
+        rss_url = PodcastRSSManager().clear_podcast_feed()
+
+        print(Fore.GREEN + "Podcast feed cleared successfully!" + Style.RESET_ALL)
+        print(f"RSS feed available at: {rss_url}")
+        return 0
+
     except Exception as e:
         print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
-        logger.error(f"Unexpected error in clear command: {str(e)}", exc_info=True)
+        logger.error(f"Clearing podcast feed failed: {str(e)}", exc_info=True)
         return 1
 
 
 def cost_command(args: argparse.Namespace) -> int:
     """
     Execute cost command.
-    
+
     Args:
         args: Command line arguments
-        
+
     Returns:
         Exit code
     """
-    print(Fore.CYAN + "💰 Vox Biblios: AWS Cost Estimation" + Style.RESET_ALL)
-    
+    print(Fore.CYAN + "Vox Biblios: AWS Cost Estimation" + Style.RESET_ALL)
+
     try:
         days = args.days
         print(f"Estimating AWS costs for the last {days} days...")
-        
-        # Create and use cost estimation service
+
         from vox_biblios.aws.cost import CostEstimationService
         cost_service = CostEstimationService()
-        
+
         try:
-            # Get monthly cost
             monthly = cost_service.get_monthly_cost(days=days)
-            
-            # Get service breakdown
             services = cost_service.get_service_costs(days=days)
-            
-            # Display results
+
             print(Fore.GREEN + f"\nTotal cost (last {days} days): {monthly['formatted']}" + Style.RESET_ALL)
             print("\nCost breakdown by service:")
-            
-            # Sort services by cost
+
             sorted_services = sorted(services.items(), key=lambda x: x[1], reverse=True)
-            
+
             for service, cost in sorted_services:
                 if cost > 0.01:  # Only show services with meaningful costs
                     percentage = (cost / monthly['cost']) * 100
                     print(f"- {service}: ${cost:.2f} ({percentage:.1f}%)")
-            
-            # Display forecast
+
             try:
                 forecast = cost_service.get_cost_forecast()
                 print(Fore.YELLOW + f"\nForecast for next 30 days: {forecast['formatted']}" + Style.RESET_ALL)
             except Exception as e:
                 logger.warning(f"Failed to get cost forecast: {str(e)}")
-            
+
             return 0
-            
+
         except Exception as e:
             print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
             logger.error(f"Cost estimation failed: {str(e)}", exc_info=True)
             return 1
-            
+
     except Exception as e:
         print(Fore.RED + f"Error: {str(e)}" + Style.RESET_ALL)
         logger.error(f"Unexpected error in cost command: {str(e)}", exc_info=True)
@@ -314,6 +419,44 @@ def version_command(_: argparse.Namespace) -> int:
     return 0
 
 
+def _write_config_file(config_file: Path, values: dict) -> None:
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_content = f"""# Vox Biblios Configuration
+# Generated by: vox-biblios config init
+
+# AWS Credentials (required for S3/RSS publishing and Polly; not needed
+# for local mode: vox-biblios process --output-dir DIR)
+AWS_ACCESS_KEY={values['aws_access_key']}
+AWS_SECRET_KEY={values['aws_secret_key']}
+
+# AWS Settings
+AWS_REGION={values['aws_region']}
+S3_BUCKET={values['s3_bucket']}
+POLLY_VOICE_ID={values['polly_voice']}
+POLLY_ENGINE=neural
+POLLY_FORMAT=mp3
+POLLY_KEY_PREFIX=audio
+
+# Podcast Settings
+PODCAST_NAME={values['podcast_name']}
+PODCAST_DESCRIPTION=I speak with the voices of all the words I've seen.
+PODCAST_WEBSITE={values['podcast_website']}
+PODCAST_EXPLICIT=false
+
+# Optional Settings
+# TTS_PROVIDER=pocket-tts
+# TTS_VOICE=
+# POCKET_TTS_VOICE=alba
+# POCKET_TTS_MODEL=english_2026-04
+# PREVIEW_LENGTH=100
+# CHUNK_SIZE=90000
+# LOG_LEVEL=INFO
+# RSS_FILENAME=voxbiblios.rss
+# PODCAST_IMAGE=https://example.com/image.jpg
+"""
+    config_file.write_text(config_content)
+
+
 def config_command(args: argparse.Namespace) -> int:
     """
     Execute config command.
@@ -329,15 +472,15 @@ def config_command(args: argparse.Namespace) -> int:
         return 1
 
     if args.config_command == 'show':
-        print(Fore.CYAN + "📋 Vox Biblios: Configuration Sources" + Style.RESET_ALL)
+        print(Fore.CYAN + "Vox Biblios: Configuration Sources" + Style.RESET_ALL)
         sources = get_config_sources()
 
         if sources:
             print("\nConfiguration loaded from:")
             for source in sources:
-                print(f"  ✓ {source}")
+                print(f"  - {source}")
         else:
-            print("\n⚠️  No configuration files found.")
+            print("\nNo configuration files found.")
             print("Using environment variables only.")
 
         print("\n" + Fore.YELLOW + "Configuration file priority:" + Style.RESET_ALL)
@@ -349,75 +492,54 @@ def config_command(args: argparse.Namespace) -> int:
         return 0
 
     elif args.config_command == 'init':
-        print(Fore.CYAN + "🔧 Vox Biblios: Initialize Configuration" + Style.RESET_ALL)
+        print(Fore.CYAN + "Vox Biblios: Initialize Configuration" + Style.RESET_ALL)
 
-        # Determine config location
         xdg_config_home = os.getenv('XDG_CONFIG_HOME', os.path.expanduser('~/.config'))
         config_dir = Path(xdg_config_home) / 'vox-biblios'
         config_file = config_dir / 'config.env'
 
-        # Check if config already exists
-        if config_file.exists():
-            print(f"\n⚠️  Configuration file already exists at: {config_file}")
+        if config_file.exists() and not args.force:
+            if args.non_interactive:
+                print(Fore.RED + f"Error: {config_file} already exists. Use --force to overwrite." + Style.RESET_ALL)
+                return 1
+            print(f"\nConfiguration file already exists at: {config_file}")
             response = input("Overwrite? (y/N): ").strip().lower()
             if response != 'y':
                 print("Cancelled.")
                 return 0
 
-        # Create config directory
         try:
-            config_dir.mkdir(parents=True, exist_ok=True)
+            if args.non_interactive:
+                values = {
+                    'aws_access_key': args.aws_access_key or '',
+                    'aws_secret_key': args.aws_secret_key or '',
+                    'aws_region': args.aws_region,
+                    's3_bucket': args.s3_bucket,
+                    'polly_voice': args.polly_voice,
+                    'podcast_name': args.podcast_name,
+                    'podcast_website': args.podcast_website,
+                }
+            else:
+                print("\nEnter your configuration values (press Enter to use defaults).")
+                print("AWS credentials are optional if you only use local mode (--output-dir).\n")
 
-            # Interactive prompts for configuration
-            print("\nEnter your configuration values (press Enter to use defaults):\n")
+                values = {
+                    'aws_access_key': input("AWS_ACCESS_KEY (blank for local-only): ").strip(),
+                    'aws_secret_key': input("AWS_SECRET_KEY (blank for local-only): ").strip(),
+                    'aws_region': input(f"AWS_REGION [{args.aws_region}]: ").strip() or args.aws_region,
+                    's3_bucket': input(f"S3_BUCKET [{args.s3_bucket}]: ").strip() or args.s3_bucket,
+                    'polly_voice': input(f"POLLY_VOICE_ID [{args.polly_voice}]: ").strip() or args.polly_voice,
+                    'podcast_name': input(f"PODCAST_NAME [{args.podcast_name}]: ").strip() or args.podcast_name,
+                    'podcast_website': input(f"PODCAST_WEBSITE [{args.podcast_website}]: ").strip() or args.podcast_website,
+                }
 
-            aws_access_key = input("AWS_ACCESS_KEY (required): ").strip()
-            aws_secret_key = input("AWS_SECRET_KEY (required): ").strip()
+            _write_config_file(config_file, values)
 
-            if not aws_access_key or not aws_secret_key:
-                print(Fore.RED + "\nError: AWS credentials are required." + Style.RESET_ALL)
-                return 1
-
-            aws_region = input("AWS_REGION [us-east-1]: ").strip() or "us-east-1"
-            s3_bucket = input("S3_BUCKET [vox-biblios]: ").strip() or "vox-biblios"
-            polly_voice = input("POLLY_VOICE_ID [Joanna]: ").strip() or "Joanna"
-            podcast_name = input("PODCAST_NAME [Vox Biblios]: ").strip() or "Vox Biblios"
-            podcast_website = input("PODCAST_WEBSITE [vox-biblios.example.com]: ").strip() or "vox-biblios.example.com"
-
-            # Write config file
-            config_content = f"""# Vox Biblios Configuration
-# Generated by: vox-biblios config init
-
-# Required AWS Credentials
-AWS_ACCESS_KEY={aws_access_key}
-AWS_SECRET_KEY={aws_secret_key}
-
-# AWS Settings
-AWS_REGION={aws_region}
-S3_BUCKET={s3_bucket}
-POLLY_VOICE_ID={polly_voice}
-POLLY_ENGINE=neural
-POLLY_FORMAT=mp3
-POLLY_KEY_PREFIX=audio
-
-# Podcast Settings
-PODCAST_NAME={podcast_name}
-PODCAST_DESCRIPTION=I speak with the voices of all the words I've seen.
-PODCAST_WEBSITE={podcast_website}
-PODCAST_EXPLICIT=false
-
-# Optional Settings
-# PREVIEW_LENGTH=100
-# CHUNK_SIZE=90000
-# LOG_LEVEL=INFO
-# RSS_FILENAME=voxbiblios.rss
-# PODCAST_IMAGE=https://example.com/image.jpg
-"""
-
-            config_file.write_text(config_content)
-            print(Fore.GREEN + f"\n✅ Configuration file created at: {config_file}" + Style.RESET_ALL)
+            print(Fore.GREEN + f"\nConfiguration file created at: {config_file}" + Style.RESET_ALL)
+            if not values['aws_access_key']:
+                print(Fore.YELLOW + "No AWS credentials set: use --output-dir for local processing." + Style.RESET_ALL)
             print("\nYou can edit this file anytime with:")
-            print(f"  vox-biblios config edit")
+            print("  vox-biblios config edit")
 
             return 0
 
@@ -427,23 +549,20 @@ PODCAST_EXPLICIT=false
             return 1
 
     elif args.config_command == 'edit':
-        print(Fore.CYAN + "📝 Vox Biblios: Edit Configuration" + Style.RESET_ALL)
+        print(Fore.CYAN + "Vox Biblios: Edit Configuration" + Style.RESET_ALL)
 
-        # Find existing config file or suggest creation
         sources = get_config_sources()
 
         if sources:
             config_file = Path(sources[0])  # Use first (highest priority) config file
             print(f"\nOpening: {config_file}")
         else:
-            # No config file exists, suggest standard location
             xdg_config_home = os.getenv('XDG_CONFIG_HOME', os.path.expanduser('~/.config'))
             config_file = Path(xdg_config_home) / 'vox-biblios' / 'config.env'
 
-            print(f"\n⚠️  No configuration file found.")
+            print("\nNo configuration file found.")
             print(f"Creating new file at: {config_file}")
 
-            # Create directory and empty file
             try:
                 config_file.parent.mkdir(parents=True, exist_ok=True)
                 if not config_file.exists():
@@ -452,13 +571,12 @@ PODCAST_EXPLICIT=false
                 print(Fore.RED + f"Error: Failed to create config file: {str(e)}" + Style.RESET_ALL)
                 return 1
 
-        # Open in editor
         editor = os.getenv('EDITOR', 'nano')
         try:
             import subprocess
             result = subprocess.run([editor, str(config_file)])
             if result.returncode == 0:
-                print(Fore.GREEN + "\n✅ Configuration updated." + Style.RESET_ALL)
+                print(Fore.GREEN + "\nConfiguration updated." + Style.RESET_ALL)
                 return 0
             else:
                 print(Fore.RED + f"\nError: Editor exited with code {result.returncode}" + Style.RESET_ALL)
@@ -513,23 +631,13 @@ def main() -> int:
     Returns:
         Exit code
     """
-    # Parse command line arguments
     args = parse_args()
 
-    # If no command is provided, default to 'process' with default input
+    # If no command is provided, default to 'process text-q'
     if not args.command:
-        # Create args for default process command
-        parser = argparse.ArgumentParser()
-        parser.add_argument('input', default='text-q')
-        parser.add_argument('--verbose', action='store_true', default=False)
-        parser.add_argument('--provider', default=None)
-        parser.add_argument('--voice', default=None)
-        parser.add_argument('--use-local-speech', action='store_true', default=False)
-        args = parser.parse_args(['text-q'])
-        args.command = 'process'
         logger.info("No command specified, defaulting to 'process text-q'")
+        args = parse_args(['process', 'text-q'])
 
-    # Execute the selected command
     if args.command == 'process':
         return process_command(args)
     elif args.command == 'clear':

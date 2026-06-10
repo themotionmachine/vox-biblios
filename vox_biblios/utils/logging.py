@@ -53,8 +53,8 @@ def get_logger(name: str) -> logging.Logger:
     
     # Only configure handlers if they haven't been added yet
     if not logger.handlers:
-        # Console handler
-        console_handler = logging.StreamHandler(sys.stdout)
+        # Console handler — stderr keeps stdout clean for program output (--json)
+        console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setFormatter(LogFormatter())
         logger.addHandler(console_handler)
 
