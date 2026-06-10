@@ -7,14 +7,18 @@ A personal text-to-podcast generator that converts text files and web content in
 - **Text-to-Podcast Conversion**: Process text files or web content into audio podcast episodes
 - **Multiple TTS Providers**:
   - **Pocket TTS** (default): High-quality local neural TTS with multiple voices (alba, marius, javert, jean, fantine, cosette, eponine, azelma)
+  - **Kokoro**: Local neural TTS via MLX (Apple Silicon), 18 voices, very fast long-form generation (optional extra)
   - **AWS Polly**: Cloud-based neural TTS with many voice options
   - **macOS Say**: Quick local generation using built-in macOS speech synthesis
+- **Local Mode**: `--output-dir` writes MP3s to a local folder — no AWS account needed
+- **One MP3 per Article**: Long texts are chunked, synthesized, and concatenated into a single episode
 - **RSS Feed Generation**: Automatically generate and update an RSS feed for podcast distribution
+- **Agent/Script Friendly**: `--json` output on stdout (logs go to stderr), `--dry-run` text preview, meaningful exit codes (0 success, 1 failure, 2 partial), stdin input
 - **Text Previews**: Includes text previews in episode descriptions for better context
 - **Cost Monitoring**: Built-in AWS cost estimation and monitoring
 - **Web Scraping**: Extract content from URLs for processing
-- **Automatic Text Cleanup**: Removes URLs, noise, long numbers and bibliography sections before conversion
-- **Flexible Input**: Accept local text files or web URLs
+- **Automatic Text Cleanup**: Removes URLs, citations, number tables, captions, page numbers, separators, and bibliography sections before conversion
+- **Flexible Input**: Accept a folder, a single text file, a web URL, or stdin (`-`)
 - **Command Line Interface**: Easy-to-use CLI for all operations
 
 ## Installation
@@ -22,18 +26,20 @@ A personal text-to-podcast generator that converts text files and web content in
 ### Prerequisites
 
 - Python 3.10 or higher
-- **ffmpeg**: Required for Pocket TTS audio conversion (`brew install ffmpeg` on macOS)
-- AWS account with S3 access (required for storing audio files)
-- AWS credentials configured
+- **ffmpeg**: Required for audio conversion and concatenation (`brew install ffmpeg` on macOS)
+- AWS account with S3 access — **only** if you want to publish to an RSS feed or use the Polly provider. Local mode (`--output-dir`) needs no AWS setup.
 
 ### Platform-Specific Features
 
 **All platforms:**
-- Pocket TTS (default): Local neural TTS, requires ffmpeg for WAV to MP3 conversion
+- Pocket TTS (default): Local neural TTS
 - AWS Polly: Cloud TTS (requires AWS account and credentials)
 
+**Apple Silicon only:**
+- `--provider kokoro` uses Kokoro-82M via MLX. Install the extra: `uv tool install '.[kokoro]'` or `pip install 'vox-biblios[kokoro]'`
+
 **macOS only:**
-- `--provider say` uses macOS built-in `say` and `afconvert` commands
+- `--provider say` uses the macOS built-in `say` command
 
 ### Global Installation (Recommended)
 
@@ -134,7 +140,16 @@ For global installation, use the interactive config initialization:
 vox-biblios config init
 ```
 
-This will guide you through setting up your configuration file at `~/.config/vox-biblios/config.env`.
+This will guide you through setting up your configuration file at `~/.config/vox-biblios/config.env`. AWS credentials may be left blank for local-only usage.
+
+For scripted setups, use the non-interactive mode:
+
+```bash
+vox-biblios config init --non-interactive \
+  --podcast-name "My Podcast"
+# Add --aws-access-key/--aws-secret-key/--s3-bucket only if publishing to S3
+# Use --force to overwrite an existing config file
+```
 
 ### Manual Configuration
 
@@ -152,7 +167,7 @@ nano .env.local
 Add your configuration settings:
 
 ```bash
-# Required
+# Required only for S3/RSS publishing or the Polly provider
 AWS_ACCESS_KEY=your_access_key_here
 AWS_SECRET_KEY=your_secret_key_here
 
@@ -174,16 +189,17 @@ vox-biblios config edit  # Edit configuration in your default editor
 
 ### Available Configuration Variables
 
-Required environment variables:
+AWS variables (required only for S3/RSS publishing or the Polly provider):
 
 - `AWS_ACCESS_KEY`: Your AWS access key
 - `AWS_SECRET_KEY`: Your AWS secret key
 
 TTS configuration:
 
-- `TTS_PROVIDER`: Default TTS provider (default: pocket-tts). Options: pocket-tts, polly, say
+- `TTS_PROVIDER`: Default TTS provider (default: pocket-tts). Options: pocket-tts, kokoro, polly, say
 - `TTS_VOICE`: Default voice for TTS (provider-specific)
 - `POCKET_TTS_VOICE`: Default voice for Pocket TTS (default: alba). Options: alba, marius, javert, jean, fantine, cosette, eponine, azelma
+- `POCKET_TTS_MODEL`: Pocket TTS model checkpoint (default: english_2026-04)
 
 Optional environment variables:
 
@@ -222,11 +238,38 @@ Process text files in a directory (uses Pocket TTS by default):
 vox-biblios process path/to/text/files/
 ```
 
-Process content from a URL:
+Process a single text file, a URL, or stdin:
 
 ```bash
+vox-biblios process notes.txt
 vox-biblios process https://example.com/article
+cat article.txt | vox-biblios process -
 ```
+
+### Local Mode (no AWS)
+
+Write MP3s to a local folder instead of uploading to S3/RSS:
+
+```bash
+vox-biblios process notes.txt --output-dir ~/Podcasts
+```
+
+### Agent / Scripting Mode
+
+Machine-readable output on stdout (all logs go to stderr):
+
+```bash
+vox-biblios process notes.txt --output-dir ./out --json
+```
+
+Preview the cleaned text without synthesizing any audio:
+
+```bash
+vox-biblios process notes.txt --dry-run          # plain text
+vox-biblios process notes.txt --dry-run --json   # JSON per file
+```
+
+Exit codes: `0` all episodes succeeded, `1` everything failed, `2` partial success. Source `.txt` files are only deleted from the queue folder after their episode succeeds.
 
 ### TTS Provider Selection
 
@@ -235,6 +278,9 @@ Use a specific TTS provider:
 ```bash
 # Use Pocket TTS (default) - local neural TTS
 vox-biblios process path/to/text/files/
+
+# Use Kokoro - local neural TTS via MLX (Apple Silicon, requires the kokoro extra)
+vox-biblios process --provider kokoro path/to/text/files/
 
 # Use AWS Polly - cloud neural TTS
 vox-biblios process --provider polly path/to/text/files/
@@ -285,10 +331,12 @@ vox-biblios version
 ### Command Options
 
 **Process Command Options:**
-- `--provider {pocket-tts,polly,say}`: TTS provider to use (default: pocket-tts)
+- `--provider {pocket-tts,kokoro,polly,say}`: TTS provider to use (default: pocket-tts)
 - `--voice VOICE`: Voice to use for TTS (provider-specific)
+- `--output-dir DIR`: Write MP3s locally instead of uploading to S3/RSS
+- `--dry-run`: Show the cleaned text that would be synthesized, then exit
+- `--json`: Emit machine-readable JSON results on stdout
 - `-v, --verbose`: Enable verbose output for debugging
-- `--use-local-speech`: DEPRECATED - use `--provider say` instead
 
 ### Text File Format
 
