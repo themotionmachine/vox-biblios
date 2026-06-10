@@ -49,47 +49,55 @@ class TextProcessor:
     def preprocess(self, text: str) -> str:
         """
         Preprocess text to prepare it for TTS.
-        
+
         Args:
             text: Raw input text
-            
+
         Returns:
             Preprocessed text
         """
         logger.info(f"Preprocessing text of length {len(text)} characters")
-        
-        # Apply preprocessing steps
-        text = self._remove_urls(text)
-        text = self._remove_noise(text)
-        text = self._remove_long_numbers(text)
+
+        # Line-based filters first: they need the original line structure,
+        # which _remove_noise destroys when it rejoins sentences with spaces.
         text = self._remove_bibliography(text)
+        text = self._remove_garbage_lines(text)
+        # Inline regex filters
+        text = self._remove_urls(text)
+        text = self._remove_citations(text)
+        text = self._remove_long_numbers(text)
+        # Sentence-based filters last
+        text = self._remove_noise(text)
         text = self._normalize_whitespace(text)
-        
+
         logger.info(f"Preprocessing complete, final length: {len(text)} characters")
         return text
     
-    def chunk(self, text: str) -> List[str]:
+    def chunk(self, text: str, max_size: Optional[int] = None) -> List[str]:
         """
         Split text into chunks suitable for TTS processing.
-        
+
         Args:
             text: Text to chunk
-            
+            max_size: Maximum chunk size in characters (defaults to the
+                      processor's max_chunk_size)
+
         Returns:
             List of text chunks
-            
+
         The method uses a multi-level approach:
         1. First tries to split by sentences
         2. If sentences are too long, splits by paragraphs
         3. If paragraphs are too long, splits by words
         4. If words are too long, splits by characters (last resort)
         """
-        logger.info(f"Chunking text of length {len(text)} characters")
-        
+        max_chunk_size = min(max_size, self.max_chunk_size) if max_size else self.max_chunk_size
+        logger.info(f"Chunking text of length {len(text)} characters (max_size={max_chunk_size})")
+
         if not text:
             logger.warning("Empty text provided for chunking")
             return []
-        
+
         chunks = []
         current_chunk = ""
         
@@ -98,34 +106,34 @@ class TextProcessor:
         
         for sentence in sentences:
             # If adding this sentence would exceed the chunk size
-            if len(current_chunk) + len(sentence) + 1 > self.max_chunk_size:
+            if len(current_chunk) + len(sentence) + 1 > max_chunk_size:
                 if current_chunk:
                     chunks.append(current_chunk.strip())
                     current_chunk = ""
                 
                 # If a single sentence is too long, try splitting by paragraphs
-                if len(sentence) > self.max_chunk_size:
-                    logger.warning(f"Sentence exceeds max chunk size ({len(sentence)} > {self.max_chunk_size}), trying paragraph split")
+                if len(sentence) > max_chunk_size:
+                    logger.warning(f"Sentence exceeds max chunk size ({len(sentence)} > {max_chunk_size}), trying paragraph split")
                     paragraphs = sentence.split('\n\n')
                     
                     for paragraph in paragraphs:
-                        if len(paragraph) > self.max_chunk_size:
+                        if len(paragraph) > max_chunk_size:
                             # If paragraph is too long, split by words
-                            logger.warning(f"Paragraph exceeds max chunk size ({len(paragraph)} > {self.max_chunk_size}), splitting by words")
+                            logger.warning(f"Paragraph exceeds max chunk size ({len(paragraph)} > {max_chunk_size}), splitting by words")
                             words = paragraph.split()
                             current_part = ""
                             
                             for word in words:
-                                if len(current_part) + len(word) + 1 > self.max_chunk_size:
+                                if len(current_part) + len(word) + 1 > max_chunk_size:
                                     if current_part:
                                         chunks.append(current_part.strip())
                                         current_part = ""
                                 
                                 # If a single word is too long, split by characters (last resort)
-                                if len(word) > self.max_chunk_size:
-                                    logger.warning(f"Word exceeds max chunk size ({len(word)} > {self.max_chunk_size}), splitting by characters")
-                                    for i in range(0, len(word), self.max_chunk_size):
-                                        chunks.append(word[i:i + self.max_chunk_size])
+                                if len(word) > max_chunk_size:
+                                    logger.warning(f"Word exceeds max chunk size ({len(word)} > {max_chunk_size}), splitting by characters")
+                                    for i in range(0, len(word), max_chunk_size):
+                                        chunks.append(word[i:i + max_chunk_size])
                                 else:
                                     current_part += word + " "
                             
@@ -146,12 +154,12 @@ class TextProcessor:
         for i, chunk in enumerate(chunks):
             chunk_length = len(chunk)
             logger.debug(f"Chunk {i+1} length: {chunk_length} characters")
-            if chunk_length > self.max_chunk_size:
-                logger.error(f"Chunk {i+1} still exceeds max chunk size ({chunk_length} > {self.max_chunk_size})")
+            if chunk_length > max_chunk_size:
+                logger.error(f"Chunk {i+1} still exceeds max chunk size ({chunk_length} > {max_chunk_size})")
                 # If we still have oversized chunks, force split them
-                if chunk_length > self.max_chunk_size:
-                    chunks[i:i+1] = [chunk[j:j + self.max_chunk_size] 
-                                   for j in range(0, len(chunk), self.max_chunk_size)]
+                if chunk_length > max_chunk_size:
+                    chunks[i:i+1] = [chunk[j:j + max_chunk_size] 
+                                   for j in range(0, len(chunk), max_chunk_size)]
         
         logger.info(f"Created {len(chunks)} chunks")
         return chunks
@@ -223,39 +231,110 @@ class TextProcessor:
         
         return result
     
-    def delete_processed_files(self, folder_path: Union[str, Path]) -> int:
+    def delete_files(self, folder_path: Union[str, Path], filenames: List[str]) -> int:
         """
-        Delete all text files from a folder after processing.
-        
+        Delete specific text files from a folder after successful processing.
+
         Args:
             folder_path: Path to the folder containing text files
-            
+            filenames: Names of the files to delete (only files whose
+                       synthesis fully succeeded should be passed here)
+
         Returns:
             Number of files deleted
         """
         folder_path = Path(folder_path)
-        logger.info(f"Deleting processed text files from folder: {folder_path}")
-        
+        logger.info(f"Deleting {len(filenames)} processed text files from folder: {folder_path}")
+
         deleted_count = 0
-        
-        try:
-            for file_path in folder_path.glob("*.txt"):
-                try:
-                    file_path.unlink()
-                    deleted_count += 1
-                    logger.debug(f"Deleted file: {file_path.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete file {file_path.name}: {str(e)}")
-            
-            logger.info(f"Deleted {deleted_count} text files from {folder_path}")
-            return deleted_count
-            
-        except Exception as e:
-            logger.error(f"Error deleting files from {folder_path}: {str(e)}", exc_info=True)
-            return deleted_count
+        for filename in filenames:
+            file_path = folder_path / filename
+            try:
+                file_path.unlink()
+                deleted_count += 1
+                logger.debug(f"Deleted file: {filename}")
+            except Exception as e:
+                logger.warning(f"Failed to delete file {filename}: {str(e)}")
+
+        logger.info(f"Deleted {deleted_count} text files from {folder_path}")
+        return deleted_count
     
     # Private helper methods
     
+    # Lines that are decoration, not prose
+    _SEPARATOR_RE = re.compile(r'^[\s\-_=*~+|•·.#>:]{3,}$')
+    # Markdown/ASCII table rows
+    _TABLE_ROW_RE = re.compile(r'^\s*\|.*\|\s*$')
+    # Bare page numbers ("12", "Page 12", "12 of 30")
+    _PAGE_NUMBER_RE = re.compile(r'^\s*(?:page\s+)?\d+(?:\s+of\s+\d+)?\s*$', re.IGNORECASE)
+    # Table/figure captions
+    _CAPTION_RE = re.compile(
+        r'^\s*(?:table|figure|fig\.?|chart|exhibit|plate|scheme)\s+[A-Z]?\d+',
+        re.IGNORECASE
+    )
+
+    def _remove_garbage_lines(self, text: str) -> str:
+        """Remove lines that are unspeakable: number tables, separators,
+        captions, page numbers, and other digit/symbol-dominated content."""
+        lines = text.split('\n')
+        kept = []
+        removed_count = 0
+
+        for line in lines:
+            if self._is_garbage_line(line):
+                removed_count += 1
+            else:
+                kept.append(line)
+
+        if removed_count:
+            logger.info(f"Removed {removed_count} garbage lines (tables, captions, separators)")
+        return '\n'.join(kept)
+
+    def _is_garbage_line(self, line: str) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False  # keep blank lines: they carry paragraph structure
+
+        if (self._SEPARATOR_RE.match(stripped)
+                or self._TABLE_ROW_RE.match(stripped)
+                or self._PAGE_NUMBER_RE.match(stripped)
+                or self._CAPTION_RE.match(stripped)):
+            return True
+
+        # Speakability check: drop digit-heavy lines that aren't prose,
+        # e.g. "2019  4.2  18.7  0.03" or "Q3 FY24 $1,204 (3.2%)"
+        non_space = [c for c in stripped if not c.isspace()]
+        alpha = sum(c.isalpha() for c in non_space)
+        digits = sum(c.isdigit() for c in non_space)
+        if digits >= 3 and alpha / len(non_space) < 0.5:
+            return True
+
+        return False
+
+    # Numbered citation markers: [12], [1, 2], [3-5]
+    _NUMERIC_CITATION_RE = re.compile(r'\[\d{1,3}(?:\s*[,;–\-]\s*\d{1,3})*\]')
+    # Wikipedia-style inline flags
+    _WIKI_FLAG_RE = re.compile(
+        r'\[(?:citation needed|according to whom\??|clarification needed|'
+        r'when\??|who\??|by whom\??|verification needed|dubious(?:\s*[–\-]\s*discuss)?)\]',
+        re.IGNORECASE
+    )
+    # Parenthetical author-year citations: (Smith, 2020), (Smith et al., 2019; Jones, 2021)
+    _AUTHOR_YEAR_RE = re.compile(
+        r'\(\s*(?:see\s+|cf\.\s+|e\.g\.,?\s+)?'
+        r'[A-Z][\w\-]+(?:\s+(?:&|and)\s+[A-Z][\w\-]+)*'
+        r'(?:\s+et\s+al\.?)?,?\s+(?:19|20)\d{2}[a-z]?'
+        r'(?:\s*[;,]\s*[^()]{0,80})?\)'
+    )
+
+    def _remove_citations(self, text: str) -> str:
+        """Remove inline citation markers that would be read aloud."""
+        logger.debug("Removing inline citations")
+        text = self._NUMERIC_CITATION_RE.sub('', text)
+        text = self._WIKI_FLAG_RE.sub('', text)
+        text = self._AUTHOR_YEAR_RE.sub('', text)
+        return text
+
     def _remove_urls(self, text: str) -> str:
         """Remove URLs from text."""
         logger.debug("Removing URLs from text")
@@ -291,6 +370,8 @@ class TextProcessor:
         """Normalize whitespace in text."""
         # Replace multiple spaces with single space
         text = re.sub(r'\s+', ' ', text)
+        # Close up spaces left behind by removed citations/URLs (e.g. "resource .")
+        text = re.sub(r'\s+([.,;:!?])', r'\1', text)
         # Remove leading/trailing whitespace
         return text.strip()
 
