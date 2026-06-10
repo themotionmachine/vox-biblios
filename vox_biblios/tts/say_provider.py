@@ -4,10 +4,11 @@ macOS 'say' command TTS provider.
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import List, Optional
 
 from vox_biblios.tts.base import TTSProvider, TTSResult
-from vox_biblios.aws.s3 import S3Service
+from vox_biblios.utils.audio import to_mp3, get_duration_seconds
 from vox_biblios.utils.logging import get_logger
 from vox_biblios.exceptions import SynthesisError, VoiceNotFoundError
 
@@ -25,7 +26,6 @@ class SayProvider(TTSProvider):
             voice: Optional voice name (default: system default)
         """
         self._voice = voice
-        self._s3_service = S3Service()
 
         if voice and not self.validate_voice(voice):
             raise VoiceNotFoundError(
@@ -42,54 +42,43 @@ class SayProvider(TTSProvider):
     def supports_voices(self) -> bool:
         return True
 
-    def synthesize(self, text: str, title: str) -> TTSResult:
+    def synthesize(self, text: str, output_path: Path) -> TTSResult:
         """
-        Synthesize text using macOS 'say' command.
+        Synthesize text using macOS 'say' command, writing an MP3.
 
         Args:
             text: The text to synthesize
-            title: A title for this synthesis (used for temp files)
+            output_path: Where to write the MP3 file
 
         Returns:
-            TTSResult with the uploaded audio URL
+            TTSResult with the local audio path
 
         Raises:
             SynthesisError: If synthesis fails
         """
         logger.info(f"Synthesizing with 'say' (voice={self._voice})")
 
-        # Create temp files
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp_in:
             tmp_in.write(text)
             input_file = tmp_in.name
 
         aiff_file = input_file.replace('.txt', '.aiff')
-        m4a_file = input_file.replace('.txt', '.m4a')
 
         try:
-            # Build say command
             cmd = ['say', '-f', input_file, '-o', aiff_file]
             if self._voice:
                 cmd.extend(['-v', self._voice])
 
-            # Run say command
             result = subprocess.run(cmd, capture_output=True)
             if result.returncode != 0:
                 raise SynthesisError(f"'say' command failed: {result.stderr.decode()}")
 
-            # Convert AIFF to M4A
-            af_cmd = ['afconvert', '-f', 'm4af', '-d', 'aac', '-o', m4a_file, aiff_file]
-            af_result = subprocess.run(af_cmd, capture_output=True)
-            if af_result.returncode != 0:
-                raise SynthesisError(f"Audio conversion failed: {af_result.stderr.decode()}")
-
-            # Upload to S3
-            uploaded_url = self._s3_service.upload_file(m4a_file)
+            to_mp3(aiff_file, output_path)
 
             return TTSResult(
-                audio_url=uploaded_url,
-                duration_seconds=None,  # Could calculate from audio file if needed
-                format="m4a",
+                audio_path=Path(output_path),
+                duration_seconds=get_duration_seconds(output_path),
+                format="mp3",
                 provider=self.name
             )
 
@@ -99,8 +88,7 @@ class SayProvider(TTSProvider):
             raise
 
         finally:
-            # Cleanup temp files
-            for f in [input_file, aiff_file, m4a_file]:
+            for f in [input_file, aiff_file]:
                 if os.path.exists(f):
                     os.remove(f)
 
@@ -121,11 +109,9 @@ class SayProvider(TTSProvider):
             for line in result.stdout.strip().split('\n'):
                 # Format: "Voice Name    language_code  # description"
                 if line.strip():
-                    # Voice name is the first part before multiple spaces
                     parts = line.split()
                     if parts:
-                        voice_name = parts[0]
-                        voices.append(voice_name)
+                        voices.append(parts[0])
 
             return voices
 

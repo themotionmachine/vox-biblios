@@ -74,6 +74,7 @@ class AWSConfig:
 class PocketTTSConfig:
     """Pocket TTS configuration settings."""
     voice: str = "alba"
+    model: str = "english_2026-04"
 
 
 @dataclass
@@ -151,7 +152,8 @@ class Config:
 
         # Initialize Pocket TTS configuration
         self.pocket_tts = PocketTTSConfig(
-            voice=os.environ.get("POCKET_TTS_VOICE", "alba")
+            voice=os.environ.get("POCKET_TTS_VOICE", "alba"),
+            model=os.environ.get("POCKET_TTS_MODEL", "english_2026-04")
         )
     
     @property

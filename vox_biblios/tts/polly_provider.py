@@ -1,11 +1,15 @@
 """
 AWS Polly TTS provider.
 """
+import os
+import tempfile
+from pathlib import Path
 from typing import List, Optional
 
 from vox_biblios.tts.base import TTSProvider, TTSResult
 from vox_biblios.aws.polly import PollyService
 from vox_biblios.config import config
+from vox_biblios.utils.audio import to_mp3, get_duration_seconds
 from vox_biblios.utils.logging import get_logger
 from vox_biblios.exceptions import SynthesisError, PollyError
 
@@ -30,7 +34,10 @@ POLLY_VOICES = [
 
 
 class PollyProvider(TTSProvider):
-    """TTS provider using AWS Polly."""
+    """TTS provider using AWS Polly's synchronous API."""
+
+    # Sync SynthesizeSpeech allows 3000 billed chars; leave headroom
+    max_chunk_chars = 2800
 
     def __init__(self, voice: Optional[str] = None):
         """
@@ -52,16 +59,16 @@ class PollyProvider(TTSProvider):
     def supports_voices(self) -> bool:
         return True
 
-    def synthesize(self, text: str, title: str) -> TTSResult:
+    def synthesize(self, text: str, output_path: Path) -> TTSResult:
         """
-        Synthesize text using AWS Polly.
+        Synthesize text using AWS Polly, writing an MP3.
 
         Args:
             text: The text to synthesize
-            title: A title for this synthesis (unused, Polly auto-generates)
+            output_path: Where to write the MP3 file
 
         Returns:
-            TTSResult with the S3 audio URL
+            TTSResult with the local audio path
 
         Raises:
             SynthesisError: If synthesis fails
@@ -69,25 +76,31 @@ class PollyProvider(TTSProvider):
         logger.info(f"Synthesizing with Polly (voice={self._voice})")
 
         try:
-            response = self._polly_service.synthesize_speech(text)
+            audio_bytes = self._polly_service.synthesize_speech(text)
+            if not audio_bytes:
+                raise SynthesisError("Polly returned empty audio")
 
-            if not response:
-                raise SynthesisError("Polly returned empty response")
-
-            # Extract URL from Polly response format
-            output_uri = response['SynthesisTask']['OutputUri']
+            if config.aws.polly_format == "mp3":
+                Path(output_path).write_bytes(audio_bytes)
+            else:
+                # Re-encode non-mp3 formats so episodes stay uniform
+                raw_file = tempfile.mktemp(suffix=f'.{config.aws.polly_format}')
+                try:
+                    Path(raw_file).write_bytes(audio_bytes)
+                    to_mp3(raw_file, output_path)
+                finally:
+                    if os.path.exists(raw_file):
+                        os.remove(raw_file)
 
             return TTSResult(
-                audio_url=output_uri,
-                duration_seconds=None,
-                format=config.aws.polly_format,
+                audio_path=Path(output_path),
+                duration_seconds=get_duration_seconds(output_path),
+                format="mp3",
                 provider=self.name
             )
 
         except PollyError as e:
             raise SynthesisError(f"Polly synthesis failed: {e}") from e
-        except KeyError as e:
-            raise SynthesisError(f"Unexpected Polly response format: {e}") from e
 
     def get_available_voices(self) -> List[str]:
         """

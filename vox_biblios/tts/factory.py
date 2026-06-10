@@ -11,6 +11,7 @@ from vox_biblios.exceptions import ProviderNotFoundError
 # Using lazy imports to avoid loading unnecessary dependencies
 PROVIDER_REGISTRY: Dict[str, tuple] = {
     "pocket-tts": ("vox_biblios.tts.pocket_tts_provider", "PocketTTSProvider"),
+    "kokoro": ("vox_biblios.tts.kokoro_provider", "KokoroProvider"),
     "polly": ("vox_biblios.tts.polly_provider", "PollyProvider"),
     "say": ("vox_biblios.tts.say_provider", "SayProvider"),
 }

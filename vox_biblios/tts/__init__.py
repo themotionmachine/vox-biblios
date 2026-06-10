@@ -3,6 +3,7 @@ TTS (Text-to-Speech) module for Vox Biblios.
 
 Provides a unified interface for multiple TTS backends:
 - pocket-tts: Local neural TTS using Pocket TTS library (default)
+- kokoro: Local Kokoro-82M via mlx-audio (Apple Silicon)
 - polly: AWS Polly cloud TTS service
 - say: macOS built-in speech synthesis
 """

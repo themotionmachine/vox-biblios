@@ -2,6 +2,10 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+# the kokoro extra pins spacy's en_core_web_sm by wheel URL
+allow-direct-references = true
+
 [project]
 name = "vox-biblios"
 version = "0.2.1"
@@ -19,6 +23,8 @@ dependencies = [
 
     # Text processing
     "nltk",
+    "numpy",
+    "scipy",
 
     # Web scraping
     "goose3",
@@ -34,7 +40,16 @@ dependencies = [
     "pandas",
 
     # TTS
-    "pocket-tts>=0.1.0",
+    "pocket-tts>=2.1.0",
+]
+
+[project.optional-dependencies]
+kokoro = [
+    "mlx-audio",
+    "misaki[en]",
+    # misaki's G2P needs this spacy model; its runtime auto-download installs
+    # into the wrong environment under uv tool installs
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
 ]
 
 [project.scripts]

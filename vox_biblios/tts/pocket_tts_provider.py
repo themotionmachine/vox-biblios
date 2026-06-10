@@ -2,18 +2,19 @@
 Pocket TTS provider using local neural TTS.
 """
 import os
-import subprocess
 import tempfile
+from pathlib import Path
 from typing import List, Optional
 
+from vox_biblios.config import config
 from vox_biblios.tts.base import TTSProvider, TTSResult
-from vox_biblios.aws.s3 import S3Service
+from vox_biblios.utils.audio import to_mp3, get_duration_seconds
 from vox_biblios.utils.logging import get_logger
 from vox_biblios.exceptions import SynthesisError, VoiceNotFoundError, ModelLoadError
 
 logger = get_logger(__name__)
 
-# Available Pocket TTS voices
+# Available Pocket TTS English voices
 POCKET_TTS_VOICES = [
     "alba",      # Default voice
     "marius",
@@ -29,15 +30,18 @@ POCKET_TTS_VOICES = [
 class PocketTTSProvider(TTSProvider):
     """TTS provider using Pocket TTS local neural synthesis."""
 
+    # Pocket TTS chunks internally, but shorter passages keep memory flat
+    # and limit the blast radius of a failed generation
+    max_chunk_chars = 4000
+
     def __init__(self, voice: Optional[str] = None):
         """
         Initialize the Pocket TTS provider.
 
         Args:
-            voice: Voice name (default: 'alba')
+            voice: Voice name (default from config, falls back to 'alba')
         """
-        self._voice = voice or "alba"
-        self._s3_service = S3Service()
+        self._voice = voice or config.pocket_tts.voice
         self._model = None  # Lazy-loaded
         self._voice_state = None  # Lazy-loaded
 
@@ -64,12 +68,12 @@ class PocketTTSProvider(TTSProvider):
         try:
             from pocket_tts import TTSModel
 
-            logger.info("Loading Pocket TTS model...")
-            self._model = TTSModel.load_model()
+            model_config = config.pocket_tts.model
+            logger.info(f"Loading Pocket TTS model ({model_config})...")
+            self._model = TTSModel.load_model(language=model_config)
             logger.info("Pocket TTS model loaded successfully")
 
             logger.info(f"Loading voice '{self._voice}'...")
-            # Pass the voice name as a string - the model handles predefined voices internally
             self._voice_state = self._model.get_state_for_audio_prompt(self._voice)
             logger.info(f"Voice '{self._voice}' loaded successfully")
 
@@ -80,62 +84,39 @@ class PocketTTSProvider(TTSProvider):
         except Exception as e:
             raise ModelLoadError(f"Failed to load Pocket TTS model: {e}") from e
 
-    def synthesize(self, text: str, title: str) -> TTSResult:
+    def synthesize(self, text: str, output_path: Path) -> TTSResult:
         """
-        Synthesize text using Pocket TTS.
+        Synthesize text using Pocket TTS, writing an MP3.
 
         Args:
             text: The text to synthesize
-            title: A title for this synthesis (used in filename)
+            output_path: Where to write the MP3 file
 
         Returns:
-            TTSResult with the uploaded audio URL
+            TTSResult with the local audio path
 
         Raises:
             SynthesisError: If synthesis fails
         """
         logger.info(f"Synthesizing with Pocket TTS (voice={self._voice})")
 
-        # Lazy-load model
         self._load_model()
 
-        # Create temp files
         wav_file = tempfile.mktemp(suffix='.wav')
-        mp3_file = tempfile.mktemp(suffix='.mp3')
 
         try:
             import scipy.io.wavfile
 
-            # Generate audio
             logger.debug(f"Generating audio for text of length {len(text)}")
             audio = self._model.generate_audio(self._voice_state, text)
 
-            # Save WAV file
             scipy.io.wavfile.write(wav_file, self._model.sample_rate, audio.numpy())
 
-            if not os.path.exists(wav_file):
-                raise SynthesisError("Pocket TTS did not generate audio file")
-
-            # Convert WAV to MP3 using ffmpeg
-            ffmpeg_cmd = [
-                'ffmpeg', '-y',  # Overwrite output
-                '-i', wav_file,
-                '-acodec', 'libmp3lame',
-                '-ab', '128k',
-                '-ar', '22050',
-                mp3_file
-            ]
-
-            result = subprocess.run(ffmpeg_cmd, capture_output=True)
-            if result.returncode != 0:
-                raise SynthesisError(f"FFmpeg conversion failed: {result.stderr.decode()}")
-
-            # Upload to S3
-            uploaded_url = self._s3_service.upload_file(mp3_file)
+            to_mp3(wav_file, output_path)
 
             return TTSResult(
-                audio_url=uploaded_url,
-                duration_seconds=None,  # Could calculate from audio if needed
+                audio_path=Path(output_path),
+                duration_seconds=get_duration_seconds(output_path),
                 format="mp3",
                 provider=self.name
             )
@@ -146,10 +127,8 @@ class PocketTTSProvider(TTSProvider):
             raise
 
         finally:
-            # Cleanup temp files
-            for f in [wav_file, mp3_file]:
-                if os.path.exists(f):
-                    os.remove(f)
+            if os.path.exists(wav_file):
+                os.remove(wav_file)
 
     def get_available_voices(self) -> List[str]:
         """
