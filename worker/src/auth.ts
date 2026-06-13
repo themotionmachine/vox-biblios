@@ -60,7 +60,13 @@ export function requireAuth<E extends { Bindings: AuthEnv }>(): MiddlewareHandle
     const cookie = getCookie(c, TOKEN_COOKIE);
     if (apiToken && cookie && (await tokenMatches(cookie, apiToken))) return next();
 
-    const jwt = c.req.header("cf-access-jwt-assertion");
+    // Cloudflare injects this header only on paths an Access app *gates*. The
+    // machine API (/api/*) is intentionally bypassed at the edge so the
+    // bearer-token poller and iOS shortcut still reach the Worker — on those
+    // paths there's no header, but a browser that signed in via Access still
+    // sends the CF_Authorization session cookie. Accept whichever is present;
+    // verifyAccessJwt cryptographically validates it either way.
+    const jwt = c.req.header("cf-access-jwt-assertion") ?? getCookie(c, "CF_Authorization");
     if (jwt && c.env.ACCESS_TEAM_DOMAIN && c.env.ACCESS_AUD) {
       if (await verifyAccessJwt(jwt, c.env.ACCESS_TEAM_DOMAIN, c.env.ACCESS_AUD)) return next();
       return c.json({ error: "invalid Access JWT" }, 401);

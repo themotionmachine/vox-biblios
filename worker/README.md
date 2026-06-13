@@ -98,10 +98,46 @@ curl https://vb.activationlayer.org/feed.xml
 Until Access is configured, the UI is reachable via `/login?token=<API_TOKEN>`
 (sets an HttpOnly cookie) and the API via bearer token — nothing is open.
 
-To add SSO: Zero Trust → Access → Applications → add a self-hosted app for
-`vb.activationlayer.org`, allow-policy for your email. Add a second app for
-`vb.activationlayer.org/feed.xml` with a **Bypass · Everyone** policy (podcast
-clients can't SSO), and similarly bypass `/healthz` if desired. Then set the
-`ACCESS_TEAM_DOMAIN` (e.g. `https://<team>.cloudflareaccess.com`) and
-`ACCESS_AUD` (the app's Application Audience tag) vars in `wrangler.jsonc` and
-redeploy — the Worker then validates the Access JWT on protected routes.
+### Design: humans use SSO, machines keep the bearer token
+
+Access enforces at Cloudflare's **edge**, before the Worker runs. If the whole
+hostname were gated, the browser would work but the bearer-token clients (poller,
+iOS shortcut, `curl`) would be **blocked at the edge** — a bearer token means
+nothing to Access. So:
+
+- **`/api/*` is bypassed at the edge** (Access · Bypass · Everyone). Requests
+  reach the Worker, which still enforces them: machines via `Authorization:
+  Bearer`, and the browser via the `CF_Authorization` session cookie that Access
+  set at login (the Worker validates that JWT in `auth.ts`, accepting either the
+  injected `Cf-Access-Jwt-Assertion` header *or* the cookie).
+- **`/feed.xml` and `/healthz` are bypassed** (podcast clients and uptime checks
+  can't SSO).
+- **Everything else (the `/` UI) requires Access** — an Allow policy for your
+  email. This is the app whose Audience (AUD) tag the Worker validates against.
+
+### Dashboard setup (Zero Trust)
+
+The deploy token has no Access scope, and Zero Trust/identity-provider setup is
+dashboard-only, so do this in the Cloudflare dashboard (Zero Trust → Access):
+
+1. If you've never used Zero Trust on this account, pick a **team name** — that
+   becomes your team domain `https://<team>.cloudflareaccess.com`.
+2. **Identity provider**: *One-time PIN* is on by default (emails a code, zero
+   config). Add Google/etc. under Settings → Authentication if preferred.
+3. **Bypass apps first** (so machines never get blocked mid-cutover) — add a
+   self-hosted application for each of `vb.activationlayer.org/api`,
+   `.../feed.xml`, `.../healthz`, each with one policy: **Bypass · Everyone**.
+4. **Allow app last** — add a self-hosted application for the bare host
+   `vb.activationlayer.org` with an **Allow** policy including your email. Copy
+   its **Application Audience (AUD) tag**.
+
+### Wire up the Worker
+
+Set both vars in `wrangler.jsonc` and redeploy:
+
+- `ACCESS_TEAM_DOMAIN` = `https://<team>.cloudflareaccess.com` (no trailing slash;
+  must match the JWT `iss`)
+- `ACCESS_AUD` = the Allow app's Application Audience tag
+
+The old `/login?token=…` path keeps working as break-glass and can be retired
+once SSO is verified.
