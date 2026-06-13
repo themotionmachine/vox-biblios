@@ -21,11 +21,11 @@
   // Same bucket the CLI publishes to, but the control plane writes only under cp/.
   // A feed is either CLI-managed or app-managed — never both (see issue #5).
   "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "vox-biblios" }],
-  // database_id omitted: wrangler provisions the database on first deploy.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "vox-biblios",
+      "database_id": "a13daa19-4be2-4f75-bf93-ead2c7070a1e",
       "migrations_dir": "migrations"
     }
   ]
