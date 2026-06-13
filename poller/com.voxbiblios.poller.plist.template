@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for the Vox Biblios synthesis poller.
+  Rendered by install.sh: __PYTHON__, __SCRIPT__, __WORKDIR__, __LOG__, __ERR__
+  are substituted, then the result is written to
+  ~/Library/LaunchAgents/com.voxbiblios.poller.plist.
+  No secrets live here — the poller reads CONTROL_PLANE_TOKEN from config.env.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.voxbiblios.poller</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>-u</string>
+        <string>__SCRIPT__</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__WORKDIR__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- The daemon writes its own log (launchd stdout redirection is unreliable
+         in an SSH-initiated GUI domain). StandardErrorPath still captures any
+         traceback that occurs before app logging is set up. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>POLLER_LOG_FILE</key>
+        <string>__LOG__</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+
+    <key>StandardErrorPath</key>
+    <string>__ERR__</string>
+</dict>
+</plist>
