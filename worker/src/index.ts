@@ -3,18 +3,26 @@ import { loginHandler, requireAuth } from "./auth";
 import {
   claimNextQueueItem,
   completeQueueItem,
+  createFeed,
   deleteEpisode,
+  deleteFeed,
   deleteQueueItem,
   failQueueItem,
   getDefaultFeed,
   getEpisode,
+  getFeedBySlug,
   getQueueItem,
   insertQueueItem,
   listEpisodes,
+  listFeeds,
   listQueueItems,
+  resolveFeed,
   retryQueueItem,
   setQueueItemAudio,
   updateEpisode,
+  updateFeed,
+  DEFAULT_FEED_SLUG,
+  type Feed,
   type QueueStatus,
 } from "./db";
 import { renderRss } from "./rss";
@@ -25,6 +33,7 @@ const MAX_TITLE_CHARS = 500;
 const MAX_DESC_CHARS = 10_000;
 const MAX_AUDIO_BYTES = 300 * 1024 * 1024;
 const AUDIO_PREFIX = "cp/episodes/";
+const SLUG_RE = /^[a-z0-9-]+$/;
 
 type AppEnv = { Bindings: Env };
 
@@ -43,15 +52,30 @@ app.get("/healthz", (c) => c.json({ ok: true }));
 
 app.get("/login", loginHandler<AppEnv>());
 
-app.get("/feed.xml", async (c) => {
-  const feed = await getDefaultFeed(c.env.DB);
-  if (!feed) return c.json({ error: "no feed configured" }, 404);
+async function feedResponse(c: Context<AppEnv>, feed: Feed) {
   const episodes = await listEpisodes(c.env.DB, feed.id);
-  const feedUrl = new URL("/feed.xml", c.req.url).toString();
+  const feedUrl = new URL(c.req.path, c.req.url).toString();
   return c.body(renderRss(feed, episodes, { feedUrl, audioBase: c.env.PUBLIC_AUDIO_BASE }), 200, {
     "Content-Type": "application/rss+xml; charset=utf-8",
     "Cache-Control": "public, max-age=300",
   });
+}
+
+// Default feed — kept stable so existing podcast subscriptions never break.
+app.get("/feed.xml", async (c) => {
+  const feed = await getDefaultFeed(c.env.DB);
+  if (!feed) return c.json({ error: "no feed configured" }, 404);
+  return feedResponse(c, feed);
+});
+
+// Per-feed RSS: /feed/<slug>.xml. (Match /feed/<file> then strip .xml to avoid
+// Hono's dot-in-param ambiguity; /feed.xml above is a distinct, dotless path.)
+app.get("/feed/:file", async (c) => {
+  const file = c.req.param("file");
+  if (!file.endsWith(".xml")) return c.json({ error: "not found" }, 404);
+  const feed = await getFeedBySlug(c.env.DB, file.slice(0, -4));
+  if (!feed) return c.json({ error: "feed not found" }, 404);
+  return feedResponse(c, feed);
 });
 
 // ---- everything below requires auth (Access JWT, bearer API_TOKEN, or login cookie) ----
@@ -60,13 +84,14 @@ const auth = requireAuth<AppEnv>();
 app.use("/api/*", auth);
 
 app.get("/", auth, async (c) => {
-  const feed = await getDefaultFeed(c.env.DB);
-  if (!feed) return c.json({ error: "no feed configured" }, 404);
-  const [queue, episodes] = await Promise.all([
-    listQueueItems(c.env.DB, null, 50),
-    listEpisodes(c.env.DB, feed.id, 50),
+  const selected = await resolveFeed(c.env.DB, c.req.query("feed"));
+  if (!selected) return c.json({ error: "no feed configured" }, 404);
+  const [feeds, queue, episodes] = await Promise.all([
+    listFeeds(c.env.DB),
+    listQueueItems(c.env.DB, null, 50, selected.id),
+    listEpisodes(c.env.DB, selected.id, 50),
   ]);
-  return c.html(renderHome(feed, queue, episodes, c.env.PUBLIC_AUDIO_BASE));
+  return c.html(renderHome(feeds, selected, queue, episodes, c.env.PUBLIC_AUDIO_BASE));
 });
 
 // ---- submission API ----
@@ -75,18 +100,25 @@ interface SubmitBody {
   url?: string;
   text?: string;
   title?: string;
+  feed?: string;
 }
+
+const pickStr = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined);
 
 async function parseSubmission(c: Context<AppEnv>): Promise<{ body: SubmitBody; isForm: boolean }> {
   const contentType = c.req.header("content-type") ?? "";
   if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {
     const form = await c.req.parseBody();
-    const pick = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined);
-    return { body: { url: pick(form["url"]), text: pick(form["text"]), title: pick(form["title"]) }, isForm: true };
+    return {
+      body: { url: pickStr(form["url"]), text: pickStr(form["text"]), title: pickStr(form["title"]), feed: pickStr(form["feed"]) },
+      isForm: true,
+    };
   }
   const json = await c.req.json<SubmitBody>().catch(() => ({}) as SubmitBody);
-  const pick = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined);
-  return { body: { url: pick(json.url), text: pick(json.text), title: pick(json.title) }, isForm: false };
+  return {
+    body: { url: pickStr(json.url), text: pickStr(json.text), title: pickStr(json.title), feed: pickStr(json.feed) },
+    isForm: false,
+  };
 }
 
 app.post("/api/queue", async (c) => {
@@ -113,8 +145,12 @@ app.post("/api/queue", async (c) => {
     return c.json({ error: `title exceeds ${MAX_TITLE_CHARS} characters` }, 400);
   }
 
-  const feed = await getDefaultFeed(c.env.DB);
-  if (!feed) return c.json({ error: "no feed configured" }, 500);
+  const feed = await resolveFeed(c.env.DB, body.feed);
+  if (!feed) {
+    return body.feed
+      ? c.json({ error: `unknown feed '${body.feed}'` }, 400)
+      : c.json({ error: "no feed configured" }, 500);
+  }
 
   const id = crypto.randomUUID();
   await insertQueueItem(c.env.DB, {
@@ -125,7 +161,7 @@ app.post("/api/queue", async (c) => {
     title: body.title ?? null,
   });
 
-  if (isForm) return c.redirect("/", 303);
+  if (isForm) return c.redirect(`/?feed=${encodeURIComponent(feed.slug)}`, 303);
   return c.json({ id, status: "queued" }, 201);
 });
 
@@ -136,7 +172,14 @@ app.get("/api/queue", async (c) => {
     return c.json({ error: `status must be one of ${valid.join(", ")}` }, 400);
   }
   const limit = Math.min(Number(c.req.query("limit") ?? 50) || 50, 200);
-  const items = await listQueueItems(c.env.DB, statusParam as QueueStatus | null, limit);
+  const feedSlug = c.req.query("feed");
+  let feedId: number | null = null;
+  if (feedSlug) {
+    const f = await getFeedBySlug(c.env.DB, feedSlug);
+    if (!f) return c.json({ error: `unknown feed '${feedSlug}'` }, 400);
+    feedId = f.id;
+  }
+  const items = await listQueueItems(c.env.DB, statusParam as QueueStatus | null, limit, feedId);
   return c.json({ items });
 });
 
@@ -161,11 +204,142 @@ app.delete("/api/queue/:id", async (c) => {
 });
 
 app.get("/api/episodes", async (c) => {
-  const feed = await getDefaultFeed(c.env.DB);
-  if (!feed) return c.json({ error: "no feed configured" }, 500);
+  const feedSlug = c.req.query("feed");
+  const feed = await resolveFeed(c.env.DB, feedSlug);
+  if (!feed) {
+    return feedSlug
+      ? c.json({ error: `unknown feed '${feedSlug}'` }, 400)
+      : c.json({ error: "no feed configured" }, 500);
+  }
   const limit = Math.min(Number(c.req.query("limit") ?? 100) || 100, 500);
   const episodes = await listEpisodes(c.env.DB, feed.id, limit);
   return c.json({ episodes });
+});
+
+// ---- feed management ----
+
+interface FeedBody {
+  slug?: string;
+  title?: string;
+  description?: string;
+  link?: string;
+  author?: string;
+  image_url?: string;
+  language?: string;
+  explicit?: boolean;
+}
+
+async function parseFeedBody(c: Context<AppEnv>): Promise<{ body: FeedBody; isForm: boolean }> {
+  const contentType = c.req.header("content-type") ?? "";
+  if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {
+    const form = await c.req.parseBody();
+    return {
+      body: {
+        slug: pickStr(form["slug"]),
+        title: pickStr(form["title"]),
+        description: pickStr(form["description"]),
+        link: pickStr(form["link"]),
+        author: pickStr(form["author"]),
+        image_url: pickStr(form["image_url"]),
+        language: pickStr(form["language"]),
+        explicit: form["explicit"] !== undefined && form["explicit"] !== "",
+      },
+      isForm: true,
+    };
+  }
+  const j = await c.req.json<FeedBody>().catch(() => ({}) as FeedBody);
+  return {
+    body: {
+      slug: pickStr(j.slug),
+      title: pickStr(j.title),
+      description: pickStr(j.description),
+      link: pickStr(j.link),
+      author: pickStr(j.author),
+      image_url: pickStr(j.image_url),
+      language: pickStr(j.language),
+      explicit: typeof j.explicit === "boolean" ? j.explicit : undefined,
+    },
+    isForm: false,
+  };
+}
+
+app.get("/api/feeds", async (c) => {
+  return c.json({ feeds: await listFeeds(c.env.DB) });
+});
+
+app.post("/api/feeds", async (c) => {
+  const { body, isForm } = await parseFeedBody(c);
+  const slug = body.slug;
+  const title = body.title;
+  if (!slug || !SLUG_RE.test(slug)) {
+    return c.json({ error: "slug is required and must match ^[a-z0-9-]+$" }, 400);
+  }
+  if (!title) return c.json({ error: "title is required" }, 400);
+  if (await getFeedBySlug(c.env.DB, slug)) {
+    return c.json({ error: `feed '${slug}' already exists` }, 409);
+  }
+  const feed = await createFeed(c.env.DB, {
+    slug,
+    title,
+    description: body.description,
+    link: body.link,
+    author: body.author,
+    image_url: body.image_url,
+    language: body.language,
+    explicit: body.explicit,
+  });
+  if (isForm) return c.redirect(`/?feed=${encodeURIComponent(slug)}`, 303);
+  return c.json({ feed }, 201);
+});
+
+async function editFeed(c: Context<AppEnv>) {
+  const slug = c.req.param("slug");
+  if (!slug) return c.json({ error: "invalid feed slug" }, 400);
+  if (!(await getFeedBySlug(c.env.DB, slug))) return c.json({ error: "feed not found" }, 404);
+  const { body, isForm } = await parseFeedBody(c);
+  const feed = await updateFeed(c.env.DB, slug, {
+    title: body.title,
+    description: body.description,
+    link: body.link,
+    author: body.author,
+    image_url: body.image_url,
+    language: body.language,
+    explicit: body.explicit,
+  });
+  if (isForm) return c.redirect(`/?feed=${encodeURIComponent(slug)}`, 303);
+  return c.json({ feed });
+}
+app.post("/api/feeds/:slug", editFeed);
+app.patch("/api/feeds/:slug", editFeed);
+
+async function removeFeed(c: Context<AppEnv>, slug: string, force: boolean) {
+  if (slug === DEFAULT_FEED_SLUG) return { code: 409, error: "cannot delete the default feed" };
+  const result = await deleteFeed(c.env.DB, slug, { force });
+  if (result === null) return { code: 404, error: "feed not found" };
+  if (result === "not-empty") {
+    return { code: 409, error: "feed has episodes/queue items; retry with ?force=1 to delete them too" };
+  }
+  for (const key of result.audio_keys) {
+    try {
+      await c.env.AUDIO.delete(key);
+    } catch (err) {
+      console.error(JSON.stringify({ message: "r2 delete failed", key, error: String(err) }));
+    }
+  }
+  return { code: 200, deleted: slug, episodes_removed: result.audio_keys.length };
+}
+
+app.post("/api/feeds/:slug/delete", async (c) => {
+  // UI delete cascades (the form's confirm dialog is the guard).
+  const r = await removeFeed(c, c.req.param("slug"), true);
+  if (r.code !== 200) return c.json({ error: r.error }, r.code as 404 | 409);
+  return c.redirect("/", 303);
+});
+
+app.delete("/api/feeds/:slug", async (c) => {
+  const r = await removeFeed(c, c.req.param("slug"), c.req.query("force") === "1");
+  if (r.code !== 200) return c.json({ error: r.error }, r.code as 404 | 409);
+  return c.json({ deleted: r.deleted, episodes_removed: r.episodes_removed });
 });
 
 // ---- episode edit / delete ----

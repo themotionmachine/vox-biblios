@@ -42,8 +42,117 @@ export interface QueueItem {
   updated_at: string;
 }
 
+/** Slug of the feed that backs /feed.xml and feed-less submissions. */
+export const DEFAULT_FEED_SLUG = "vox-biblios";
+
+export async function getFeedBySlug(db: D1Database, slug: string): Promise<Feed | null> {
+  return db.prepare("SELECT * FROM feeds WHERE slug = ?").bind(slug).first<Feed>();
+}
+
+export async function listFeeds(db: D1Database): Promise<Feed[]> {
+  const { results } = await db.prepare("SELECT * FROM feeds ORDER BY id").all<Feed>();
+  return results;
+}
+
 export async function getDefaultFeed(db: D1Database): Promise<Feed | null> {
-  return db.prepare("SELECT * FROM feeds ORDER BY id LIMIT 1").first<Feed>();
+  return (
+    (await getFeedBySlug(db, DEFAULT_FEED_SLUG)) ??
+    (await db.prepare("SELECT * FROM feeds ORDER BY id LIMIT 1").first<Feed>())
+  );
+}
+
+/** Resolve a feed from an optional slug; falls back to the default feed. */
+export async function resolveFeed(db: D1Database, slug?: string | null): Promise<Feed | null> {
+  return slug ? getFeedBySlug(db, slug) : getDefaultFeed(db);
+}
+
+export interface FeedInput {
+  slug: string;
+  title: string;
+  description?: string;
+  link?: string;
+  author?: string;
+  image_url?: string;
+  language?: string;
+  explicit?: boolean;
+}
+
+export async function createFeed(db: D1Database, f: FeedInput): Promise<Feed | null> {
+  return db
+    .prepare(
+      `INSERT INTO feeds (slug, title, description, link, author, image_url, language, explicit)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    )
+    .bind(
+      f.slug,
+      f.title,
+      f.description ?? "",
+      f.link ?? "",
+      f.author ?? "",
+      f.image_url ?? "",
+      f.language ?? "en",
+      f.explicit ? 1 : 0,
+    )
+    .first<Feed>();
+}
+
+export async function updateFeed(
+  db: D1Database,
+  slug: string,
+  fields: Partial<Omit<FeedInput, "slug">>,
+): Promise<Feed | null> {
+  const map: Record<string, string | number | undefined> = {
+    title: fields.title,
+    description: fields.description,
+    link: fields.link,
+    author: fields.author,
+    image_url: fields.image_url,
+    language: fields.language,
+    explicit: fields.explicit === undefined ? undefined : fields.explicit ? 1 : 0,
+  };
+  const cols: string[] = [];
+  const binds: (string | number)[] = [];
+  for (const [k, v] of Object.entries(map)) {
+    if (v !== undefined) {
+      cols.push(`${k} = ?`);
+      binds.push(v);
+    }
+  }
+  if (cols.length === 0) return getFeedBySlug(db, slug);
+  return db
+    .prepare(`UPDATE feeds SET ${cols.join(", ")} WHERE slug = ? RETURNING *`)
+    .bind(...binds, slug)
+    .first<Feed>();
+}
+
+/**
+ * Delete a feed. Refuses (returns "not-empty") if it still has episodes or queue
+ * items unless `force`. With force, deletes in FK-safe order (queue_items →
+ * episodes → feeds) and returns the episodes' audio_keys for R2 cleanup. Returns
+ * null if no such feed.
+ */
+export async function deleteFeed(
+  db: D1Database,
+  slug: string,
+  opts: { force: boolean },
+): Promise<{ audio_keys: string[] } | "not-empty" | null> {
+  const feed = await getFeedBySlug(db, slug);
+  if (!feed) return null;
+  const { results: eps } = await db
+    .prepare("SELECT audio_key FROM episodes WHERE feed_id = ?")
+    .bind(feed.id)
+    .all<{ audio_key: string }>();
+  const queued = await db
+    .prepare("SELECT COUNT(*) AS n FROM queue_items WHERE feed_id = ?")
+    .bind(feed.id)
+    .first<{ n: number }>();
+  if ((eps.length > 0 || (queued?.n ?? 0) > 0) && !opts.force) return "not-empty";
+  await db.batch([
+    db.prepare("DELETE FROM queue_items WHERE feed_id = ?").bind(feed.id),
+    db.prepare("DELETE FROM episodes WHERE feed_id = ?").bind(feed.id),
+    db.prepare("DELETE FROM feeds WHERE id = ?").bind(feed.id),
+  ]);
+  return { audio_keys: eps.map((e) => e.audio_key) };
 }
 
 export async function listEpisodes(db: D1Database, feedId: number, limit = 100): Promise<Episode[]> {
@@ -95,11 +204,23 @@ export async function listQueueItems(
   db: D1Database,
   status: QueueStatus | null,
   limit = 50,
+  feedId?: number | null,
 ): Promise<QueueItem[]> {
-  const stmt = status
-    ? db.prepare("SELECT * FROM queue_items WHERE status = ? ORDER BY created_at DESC LIMIT ?").bind(status, limit)
-    : db.prepare("SELECT * FROM queue_items ORDER BY created_at DESC LIMIT ?").bind(limit);
-  const { results } = await stmt.all<QueueItem>();
+  const where: string[] = [];
+  const binds: (string | number)[] = [];
+  if (status) {
+    where.push("status = ?");
+    binds.push(status);
+  }
+  if (feedId != null) {
+    where.push("feed_id = ?");
+    binds.push(feedId);
+  }
+  const clause = where.length ? `WHERE ${where.join(" AND ")} ` : "";
+  const { results } = await db
+    .prepare(`SELECT * FROM queue_items ${clause}ORDER BY created_at DESC LIMIT ?`)
+    .bind(...binds, limit)
+    .all<QueueItem>();
   return results;
 }
 

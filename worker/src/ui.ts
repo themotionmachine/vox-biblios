@@ -1,5 +1,5 @@
 import { html, raw } from "hono/html";
-import type { Episode, Feed, QueueItem } from "./db";
+import { DEFAULT_FEED_SLUG, type Episode, type Feed, type QueueItem } from "./db";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -54,7 +54,71 @@ function episodeRow(ep: Episode, audioBase: string): string {
   </tr>`;
 }
 
+function feedSwitcher(feeds: Feed[], selected: Feed): string {
+  const tabs = feeds
+    .map((f) => {
+      const active = f.id === selected.id ? " active" : "";
+      return `<a class="feed-tab${active}" href="/?feed=${encodeURIComponent(f.slug)}">${esc(f.title)}</a>`;
+    })
+    .join("");
+  return `<nav class="feeds">${tabs}</nav>`;
+}
+
+function feedSelect(feeds: Feed[], selected: Feed): string {
+  const opts = feeds
+    .map((f) => `<option value="${esc(f.slug)}"${f.id === selected.id ? " selected" : ""}>${esc(f.title)}</option>`)
+    .join("");
+  return `<select name="feed">${opts}</select>`;
+}
+
+function feedManageRow(f: Feed): string {
+  const slug = esc(f.slug);
+  const del =
+    f.slug === DEFAULT_FEED_SLUG
+      ? `<span class="muted">default</span>`
+      : `<form method="post" action="/api/feeds/${slug}/delete" onsubmit="return confirm('Delete feed “${esc(
+          f.title,
+        )}” and ALL its episodes (audio included)? This cannot be undone.')"><button class="danger">delete</button></form>`;
+  const edit = `<details class="edit">
+    <summary>edit</summary>
+    <form method="post" action="/api/feeds/${slug}">
+      <input name="title" type="text" value="${esc(f.title)}" placeholder="Title" />
+      <textarea name="description" rows="2" placeholder="Description">${esc(f.description)}</textarea>
+      <input name="author" type="text" value="${esc(f.author)}" placeholder="Author" />
+      <input name="image_url" type="url" value="${esc(f.image_url)}" placeholder="Image URL" />
+      <input name="link" type="url" value="${esc(f.link)}" placeholder="Website link" />
+      <label class="row"><input name="explicit" type="checkbox" ${f.explicit ? "checked" : ""}/> explicit</label>
+      <button type="submit">Save</button>
+    </form>
+  </details>`;
+  return `<tr>
+    <td><code>${slug}</code></td>
+    <td>${esc(f.title)}</td>
+    <td><a href="/feed/${slug}.xml">rss</a></td>
+    <td class="actions">${edit}${del}</td>
+  </tr>`;
+}
+
+function feedsPanel(feeds: Feed[]): string {
+  const rows = feeds.map(feedManageRow).join("");
+  const addForm = `<details class="edit add-feed">
+    <summary>+ add feed</summary>
+    <form method="post" action="/api/feeds">
+      <input name="slug" type="text" placeholder="slug (a-z 0-9 -)" required pattern="[a-z0-9-]+" />
+      <input name="title" type="text" placeholder="Title" required />
+      <textarea name="description" rows="2" placeholder="Description"></textarea>
+      <input name="author" type="text" placeholder="Author" />
+      <input name="image_url" type="url" placeholder="Image URL" />
+      <input name="link" type="url" placeholder="Website link" />
+      <label class="row"><input name="explicit" type="checkbox" /> explicit</label>
+      <button type="submit">Create feed</button>
+    </form>
+  </details>`;
+  return `<table><thead><tr><th>slug</th><th>title</th><th>rss</th><th></th></tr></thead><tbody>${rows}</tbody></table>${addForm}`;
+}
+
 export function renderHome(
+  feeds: Feed[],
   feed: Feed,
   queue: QueueItem[],
   episodes: Episode[],
@@ -86,14 +150,21 @@ export function renderHome(
   details.edit[open] { padding: 0.4rem 0; }
   details.edit form { display: grid; gap: 0.4rem; margin-top: 0.4rem; min-width: 18rem; }
   button.danger { color: #b3261e; border-color: color-mix(in srgb, #b3261e 40%, transparent); }
+  nav.feeds { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0 1rem; }
+  .feed-tab { text-decoration: none; padding: 0.25rem 0.7rem; border-radius: 99px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); font-size: 0.85rem; }
+  .feed-tab.active { background: color-mix(in srgb, currentColor 12%, transparent); font-weight: 600; }
+  label.row { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85rem; width: fit-content; }
+  select { font: inherit; padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); background: transparent; }
 </style>
 </head>
 <body>
+${raw(feedSwitcher(feeds, feed))}
 <h1>${feed.title}</h1>
-<p class="muted">${feed.description} · <a href="/feed.xml">feed.xml</a></p>
+<p class="muted">${feed.description} · <a href="/feed/${esc(feed.slug)}.xml">feed.xml</a></p>
 
 <h2>Submit</h2>
 <form class="submit" method="post" action="/api/queue">
+  ${raw(feedSelect(feeds, feed))}
   <input name="url" type="url" placeholder="https://example.com/article" />
   <textarea name="text" rows="4" placeholder="…or paste raw text"></textarea>
   <input name="title" type="text" placeholder="Title (optional, used for text submissions)" />
@@ -113,6 +184,9 @@ ${episodes.length === 0
     : raw(`<table><thead><tr><th>title</th><th>audio</th><th>size</th><th>published (UTC)</th><th></th></tr></thead><tbody>${episodes
         .map((ep) => episodeRow(ep, audioBase))
         .join("")}</tbody></table>`)}
+
+<h2>Feeds</h2>
+${raw(feedsPanel(feeds))}
 </body>
 </html>`;
 }

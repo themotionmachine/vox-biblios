@@ -29,15 +29,21 @@ cookie, or a valid Cloudflare Access JWT (once `ACCESS_TEAM_DOMAIN` /
 | Route | Purpose |
 |---|---|
 | `GET /` | minimal UI: submit form, queue status, episode list |
-| `POST /api/queue` | submit `{url}` or `{text, title?}` (JSON or form-encoded) → `201 {id, status}` |
-| `GET /api/queue?status=&limit=` | list queue items |
+| `POST /api/queue` | submit `{url}` or `{text, title?}` (+ optional `feed` slug) → `201 {id, status}` |
+| `GET /api/queue?status=&limit=&feed=` | list queue items (optionally one feed) |
 | `GET /api/queue/:id` | one item (poll this for status) |
 | `POST /api/queue/:id/retry` | `failed → queued` |
 | `DELETE /api/queue/:id` | delete a `queued`/`failed` item |
-| `GET /api/episodes` | list episodes |
+| `GET /api/episodes?feed=` | list episodes (optionally one feed) |
 | `POST /api/episodes/:id` | edit `{title?, description?}` (JSON or form) → updated episode |
 | `POST /api/episodes/:id/delete` | UI delete (form): removes episode, its MP3 from R2, and the queue row |
 | `DELETE /api/episodes/:id` | same as above for API clients → `{deleted}` |
+| `GET /feed.xml` | RSS for the **default** feed (`vox-biblios`) — kept stable for existing subscribers |
+| `GET /feed/<slug>.xml` | RSS for a specific feed |
+| `GET /api/feeds` | list feeds |
+| `POST /api/feeds` | create `{slug, title, …}` (JSON or form); slug `^[a-z0-9-]+$`, unique |
+| `POST/PATCH /api/feeds/:slug` | edit feed metadata |
+| `DELETE /api/feeds/:slug?force=1` | delete a feed; refuses (409) if non-empty unless `force` (cascades episodes + R2) |
 
 Poller contract (phase 3):
 
@@ -49,6 +55,19 @@ Poller contract (phase 3):
 | `POST /api/worker/items/:id/fail` | `{error}` → item `failed` (retryable from UI) |
 
 Status lifecycle: `queued → synthesizing → published | failed` (failed → queued via retry).
+
+### Multi-feed
+
+The control plane can host several app-managed feeds. A submission targets a feed
+by `slug`; omit it and it goes to the default (`vox-biblios`), so `/feed.xml` and
+bare submits behave exactly as before. Each feed has its own RSS at
+`/feed/<slug>.xml`; the UI has a feed switcher and a Feeds panel (add/edit/delete).
+
+**This is a control-plane concept only.** The `vox-biblios` CLI and the poller
+have no notion of feeds — the CLI runs unchanged (`--output-dir` mode, no `--feed`
+flag), and the poller just synthesizes whatever it claims; the Worker handles all
+feed association from the queue item's `feed_id`. Keep the invariant: a feed is
+CLI-managed *or* app-managed, never both.
 
 To submit from a phone, build the iOS share-sheet shortcut in
 [`../docs/ios-shortcut.md`](../docs/ios-shortcut.md) — it POSTs the shared URL or
