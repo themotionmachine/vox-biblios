@@ -13,10 +13,11 @@
   "vars": {
     // Public base URL of the R2 bucket; episode enclosure URLs are <base>/<audio_key>.
     "PUBLIC_AUDIO_BASE": "https://pub-ac39464920f04d719bf1bd1a61aeb453.r2.dev",
-    // Cloudflare Access (browser SSO). Leave empty until the Access app exists;
-    // machine clients authenticate with the API_TOKEN secret either way.
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": ""
+    // Cloudflare Access (browser SSO). Team domain must match the JWT `iss`;
+    // AUD is the "vox-biblios UI (allow)" app's Application Audience tag.
+    // Machine clients still authenticate with the API_TOKEN secret on /api.
+    "ACCESS_TEAM_DOMAIN": "https://sweet-paper-cd32.cloudflareaccess.com",
+    "ACCESS_AUD": "8a84f98bbc90c5e5b3504e56ee1c06e86ab129676573efa18c4c74ac82db844c"
   },
   // Same bucket the CLI publishes to, but the control plane writes only under cp/.
   // A feed is either CLI-managed or app-managed — never both (see issue #5).
