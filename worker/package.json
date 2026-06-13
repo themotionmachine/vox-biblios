@@ -1,0 +1,23 @@
+{
+  "name": "vox-biblios-control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web control plane for vox-biblios feeds/episodes (Cloudflare Workers + D1 + R2)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "check": "wrangler types && tsc --noEmit",
+    "migrate:local": "wrangler d1 migrations apply vox-biblios --local",
+    "migrate:remote": "wrangler d1 migrations apply vox-biblios --remote"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "jose": "^5.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}

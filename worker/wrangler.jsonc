@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vox-biblios-control-plane",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  // Custom domain on the activationlayer.org zone; DNS record is created on deploy.
+  "routes": [{ "pattern": "vb.activationlayer.org", "custom_domain": true }],
+  "vars": {
+    // Public base URL of the R2 bucket; episode enclosure URLs are <base>/<audio_key>.
+    "PUBLIC_AUDIO_BASE": "https://pub-ac39464920f04d719bf1bd1a61aeb453.r2.dev",
+    // Cloudflare Access (browser SSO). Leave empty until the Access app exists;
+    // machine clients authenticate with the API_TOKEN secret either way.
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": ""
+  },
+  // Same bucket the CLI publishes to, but the control plane writes only under cp/.
+  // A feed is either CLI-managed or app-managed — never both (see issue #5).
+  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "vox-biblios" }],
+  // database_id omitted: wrangler provisions the database on first deploy.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vox-biblios",
+      "migrations_dir": "migrations"
+    }
+  ]
+  // Secrets (wrangler secret put): API_TOKEN — bearer token for the poller / iOS shortcut.
+}
