@@ -1,5 +1,5 @@
 import { html, raw } from "hono/html";
-import { DEFAULT_FEED_SLUG, type Episode, type Feed, type QueueItem } from "./db";
+import { DEFAULT_FEED_SLUG, type Episode, type Feed, type QueueItem, type Stats } from "./db";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -34,11 +34,13 @@ function queueRow(item: QueueItem): string {
 
 function episodeRow(ep: Episode, audioBase: string): string {
   const id = esc(String(ep.id));
+  const pubLocal = esc(ep.published_at.replace(" ", "T").slice(0, 16));
   const actions = `<details class="edit">
     <summary>edit</summary>
     <form method="post" action="/api/episodes/${id}">
       <input name="title" type="text" value="${esc(ep.title)}" />
       <textarea name="description" rows="3">${esc(ep.description)}</textarea>
+      <label class="row">publish (UTC) <input name="published_at" type="datetime-local" value="${pubLocal}" /></label>
       <button type="submit">Save</button>
     </form>
   </details>
@@ -117,11 +119,28 @@ function feedsPanel(feeds: Feed[]): string {
   return `<table><thead><tr><th>slug</th><th>title</th><th>rss</th><th></th></tr></thead><tbody>${rows}</tbody></table>${addForm}`;
 }
 
+function statsBar(s: Stats): string {
+  const cell = (label: string, val: number, cls = "") =>
+    `<span class="stat ${cls}"><b>${val}</b> ${label}</span>`;
+  const stale = s.stale_synthesizing > 0 ? cell("stale", s.stale_synthesizing, "warn") : "";
+  const lastPub = s.last_published_at ? `last publish ${esc(s.last_published_at)} UTC` : "no episodes yet";
+  const backlog = s.oldest_queued_at ? ` · oldest queued ${esc(s.oldest_queued_at)} UTC` : "";
+  return `<div class="stats">
+    ${cell("feeds", s.feeds)}
+    ${cell("episodes", s.episodes)}
+    ${cell("queued", s.by_status.queued)}
+    ${cell("synthesizing", s.by_status.synthesizing)}${stale}
+    ${cell("failed", s.by_status.failed, s.by_status.failed > 0 ? "warn" : "")}
+    <span class="muted">${lastPub}${backlog}</span>
+  </div>`;
+}
+
 export function renderHome(
   feeds: Feed[],
   feed: Feed,
   queue: QueueItem[],
   episodes: Episode[],
+  stats: Stats,
   audioBase: string,
 ): ReturnType<typeof html> {
   return html`<!doctype html>
@@ -155,9 +174,13 @@ export function renderHome(
   .feed-tab.active { background: color-mix(in srgb, currentColor 12%, transparent); font-weight: 600; }
   label.row { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85rem; width: fit-content; }
   select { font: inherit; padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); background: transparent; }
+  .stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 0.9rem; font-size: 0.85rem; padding: 0.6rem 0.8rem; border: 1px solid color-mix(in srgb, currentColor 15%, transparent); border-radius: 8px; }
+  .stat b { font-size: 1rem; }
+  .stat.warn b { color: #b3261e; }
 </style>
 </head>
 <body>
+${raw(statsBar(stats))}
 ${raw(feedSwitcher(feeds, feed))}
 <h1>${feed.title}</h1>
 <p class="muted">${feed.description} · <a href="/feed/${esc(feed.slug)}.xml">feed.xml</a></p>

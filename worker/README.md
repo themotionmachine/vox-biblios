@@ -35,7 +35,8 @@ cookie, or a valid Cloudflare Access JWT (once `ACCESS_TEAM_DOMAIN` /
 | `POST /api/queue/:id/retry` | `failed → queued` |
 | `DELETE /api/queue/:id` | delete a `queued`/`failed` item |
 | `GET /api/episodes?feed=` | list episodes (optionally one feed) |
-| `POST /api/episodes/:id` | edit `{title?, description?}` (JSON or form) → updated episode |
+| `POST /api/episodes/:id` | edit `{title?, description?, published_at?}` (JSON or form) → updated episode. `published_at` (UTC) is the reorder lever — clients sort by it |
+| `GET /api/stats` | counts (feeds, episodes, queue by status), stale-synthesizing count, last publish / oldest queued — drives the UI status bar |
 | `POST /api/episodes/:id/delete` | UI delete (form): removes episode, its MP3 from R2, and the queue row |
 | `DELETE /api/episodes/:id` | same as above for API clients → `{deleted}` |
 | `GET /feed.xml` | RSS for the **default** feed (`vox-biblios`) — kept stable for existing subscribers |

@@ -170,14 +170,53 @@ export async function getEpisode(db: D1Database, id: number): Promise<Episode | 
 export async function updateEpisode(
   db: D1Database,
   id: number,
-  meta: { title: string; description: string },
+  meta: { title: string; description: string; published_at?: string },
 ): Promise<Episode | null> {
+  // published_at is the only ordering signal podcast clients honor, so editing it
+  // is how an episode is "reordered" in the feed.
+  if (meta.published_at !== undefined) {
+    return db
+      .prepare(`UPDATE episodes SET title = ?, description = ?, published_at = ? WHERE id = ? RETURNING *`)
+      .bind(meta.title, meta.description, meta.published_at, id)
+      .first<Episode>();
+  }
   return db
-    .prepare(
-      `UPDATE episodes SET title = ?, description = ? WHERE id = ? RETURNING *`,
-    )
+    .prepare(`UPDATE episodes SET title = ?, description = ? WHERE id = ? RETURNING *`)
     .bind(meta.title, meta.description, id)
     .first<Episode>();
+}
+
+export interface Stats {
+  feeds: number;
+  episodes: number;
+  by_status: Record<QueueStatus, number>;
+  stale_synthesizing: number;
+  last_published_at: string | null;
+  oldest_queued_at: string | null;
+}
+
+/** At-a-glance health, derived entirely from D1 (no poller changes needed). */
+export async function getStats(db: D1Database): Promise<Stats> {
+  const by_status: Record<QueueStatus, number> = { queued: 0, synthesizing: 0, published: 0, failed: 0 };
+  const r = await db.batch<{ v: number | string | null }>([
+    db.prepare("SELECT status, COUNT(*) AS v FROM queue_items GROUP BY status"),
+    db.prepare("SELECT COUNT(*) AS v FROM feeds"),
+    db.prepare("SELECT COUNT(*) AS v FROM episodes"),
+    db.prepare("SELECT COUNT(*) AS v FROM queue_items WHERE status = 'synthesizing' AND claimed_at < datetime('now', '-30 minutes')"),
+    db.prepare("SELECT MAX(published_at) AS v FROM episodes"),
+    db.prepare("SELECT MIN(created_at) AS v FROM queue_items WHERE status = 'queued'"),
+  ]);
+  for (const row of (r[0]?.results ?? []) as Array<{ status: QueueStatus; v: number }>) {
+    by_status[row.status] = row.v;
+  }
+  return {
+    feeds: Number(r[1]?.results[0]?.v ?? 0),
+    episodes: Number(r[2]?.results[0]?.v ?? 0),
+    by_status,
+    stale_synthesizing: Number(r[3]?.results[0]?.v ?? 0),
+    last_published_at: (r[4]?.results[0]?.v as string | null) ?? null,
+    oldest_queued_at: (r[5]?.results[0]?.v as string | null) ?? null,
+  };
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   getEpisode,
   getFeedBySlug,
   getQueueItem,
+  getStats,
   insertQueueItem,
   listEpisodes,
   listFeeds,
@@ -86,12 +87,17 @@ app.use("/api/*", auth);
 app.get("/", auth, async (c) => {
   const selected = await resolveFeed(c.env.DB, c.req.query("feed"));
   if (!selected) return c.json({ error: "no feed configured" }, 404);
-  const [feeds, queue, episodes] = await Promise.all([
+  const [feeds, queue, episodes, stats] = await Promise.all([
     listFeeds(c.env.DB),
     listQueueItems(c.env.DB, null, 50, selected.id),
     listEpisodes(c.env.DB, selected.id, 50),
+    getStats(c.env.DB),
   ]);
-  return c.html(renderHome(feeds, selected, queue, episodes, c.env.PUBLIC_AUDIO_BASE));
+  return c.html(renderHome(feeds, selected, queue, episodes, stats, c.env.PUBLIC_AUDIO_BASE));
+});
+
+app.get("/api/stats", async (c) => {
+  return c.json(await getStats(c.env.DB));
 });
 
 // ---- submission API ----
@@ -347,6 +353,17 @@ app.delete("/api/feeds/:slug", async (c) => {
 interface EditBody {
   title?: string;
   description?: string;
+  published_at?: string;
+}
+
+/** Normalize a datetime to D1's 'YYYY-MM-DD HH:MM:SS' (UTC), or null if invalid. */
+function normalizeDatetime(s: string): string | null {
+  const t = s.trim().replace("T", " ");
+  const m = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})(:\d{2})?$/.exec(t);
+  if (!m) return null;
+  const normalized = m[2] ? t : `${t}:00`;
+  if (Number.isNaN(Date.parse(normalized.replace(" ", "T") + "Z"))) return null;
+  return normalized;
 }
 
 async function parseEdit(c: Context<AppEnv>): Promise<{ body: EditBody; isForm: boolean }> {
@@ -354,10 +371,16 @@ async function parseEdit(c: Context<AppEnv>): Promise<{ body: EditBody; isForm: 
   const contentType = c.req.header("content-type") ?? "";
   if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {
     const form = await c.req.parseBody();
-    return { body: { title: pick(form["title"]), description: pick(form["description"]) }, isForm: true };
+    return {
+      body: { title: pick(form["title"]), description: pick(form["description"]), published_at: pick(form["published_at"]) },
+      isForm: true,
+    };
   }
   const json = await c.req.json<EditBody>().catch(() => ({}) as EditBody);
-  return { body: { title: pick(json.title), description: pick(json.description) }, isForm: false };
+  return {
+    body: { title: pick(json.title), description: pick(json.description), published_at: pick(json.published_at) },
+    isForm: false,
+  };
 }
 
 app.post("/api/episodes/:id", async (c) => {
@@ -375,8 +398,14 @@ app.post("/api/episodes/:id", async (c) => {
   if (description.length > MAX_DESC_CHARS) {
     return c.json({ error: `description exceeds ${MAX_DESC_CHARS} characters` }, 400);
   }
+  let published_at: string | undefined;
+  if (body.published_at) {
+    const norm = normalizeDatetime(body.published_at);
+    if (!norm) return c.json({ error: "published_at must be 'YYYY-MM-DD HH:MM(:SS)' (UTC)" }, 400);
+    published_at = norm;
+  }
 
-  const episode = await updateEpisode(c.env.DB, id, { title, description });
+  const episode = await updateEpisode(c.env.DB, id, { title, description, published_at });
   if (isForm) return c.redirect("/", 303);
   return c.json({ episode });
 });
