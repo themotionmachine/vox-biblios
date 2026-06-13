@@ -35,6 +35,9 @@ cookie, or a valid Cloudflare Access JWT (once `ACCESS_TEAM_DOMAIN` /
 | `POST /api/queue/:id/retry` | `failed → queued` |
 | `DELETE /api/queue/:id` | delete a `queued`/`failed` item |
 | `GET /api/episodes` | list episodes |
+| `POST /api/episodes/:id` | edit `{title?, description?}` (JSON or form) → updated episode |
+| `POST /api/episodes/:id/delete` | UI delete (form): removes episode, its MP3 from R2, and the queue row |
+| `DELETE /api/episodes/:id` | same as above for API clients → `{deleted}` |
 
 Poller contract (phase 3):
 
@@ -46,6 +49,10 @@ Poller contract (phase 3):
 | `POST /api/worker/items/:id/fail` | `{error}` → item `failed` (retryable from UI) |
 
 Status lifecycle: `queued → synthesizing → published | failed` (failed → queued via retry).
+
+To submit from a phone, build the iOS share-sheet shortcut in
+[`../docs/ios-shortcut.md`](../docs/ios-shortcut.md) — it POSTs the shared URL or
+text to `/api/queue` with the bearer token (the parked "vb-from-iOS" idea).
 
 ## Local development
 

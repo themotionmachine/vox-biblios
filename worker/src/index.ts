@@ -3,15 +3,18 @@ import { loginHandler, requireAuth } from "./auth";
 import {
   claimNextQueueItem,
   completeQueueItem,
+  deleteEpisode,
   deleteQueueItem,
   failQueueItem,
   getDefaultFeed,
+  getEpisode,
   getQueueItem,
   insertQueueItem,
   listEpisodes,
   listQueueItems,
   retryQueueItem,
   setQueueItemAudio,
+  updateEpisode,
   type QueueStatus,
 } from "./db";
 import { renderRss } from "./rss";
@@ -19,6 +22,7 @@ import { renderHome } from "./ui";
 
 const MAX_TEXT_CHARS = 500_000;
 const MAX_TITLE_CHARS = 500;
+const MAX_DESC_CHARS = 10_000;
 const MAX_AUDIO_BYTES = 300 * 1024 * 1024;
 const AUDIO_PREFIX = "cp/episodes/";
 
@@ -162,6 +166,74 @@ app.get("/api/episodes", async (c) => {
   const limit = Math.min(Number(c.req.query("limit") ?? 100) || 100, 500);
   const episodes = await listEpisodes(c.env.DB, feed.id, limit);
   return c.json({ episodes });
+});
+
+// ---- episode edit / delete ----
+
+interface EditBody {
+  title?: string;
+  description?: string;
+}
+
+async function parseEdit(c: Context<AppEnv>): Promise<{ body: EditBody; isForm: boolean }> {
+  const pick = (v: unknown) => (typeof v === "string" ? v.trim() : undefined);
+  const contentType = c.req.header("content-type") ?? "";
+  if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {
+    const form = await c.req.parseBody();
+    return { body: { title: pick(form["title"]), description: pick(form["description"]) }, isForm: true };
+  }
+  const json = await c.req.json<EditBody>().catch(() => ({}) as EditBody);
+  return { body: { title: pick(json.title), description: pick(json.description) }, isForm: false };
+}
+
+app.post("/api/episodes/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid episode id" }, 400);
+
+  const existing = await getEpisode(c.env.DB, id);
+  if (!existing) return c.json({ error: "not found" }, 404);
+
+  const { body, isForm } = await parseEdit(c);
+  const title = body.title ?? existing.title;
+  const description = body.description ?? existing.description;
+  if (!title) return c.json({ error: "title cannot be empty" }, 400);
+  if (title.length > MAX_TITLE_CHARS) return c.json({ error: `title exceeds ${MAX_TITLE_CHARS} characters` }, 400);
+  if (description.length > MAX_DESC_CHARS) {
+    return c.json({ error: `description exceeds ${MAX_DESC_CHARS} characters` }, 400);
+  }
+
+  const episode = await updateEpisode(c.env.DB, id, { title, description });
+  if (isForm) return c.redirect("/", 303);
+  return c.json({ episode });
+});
+
+async function removeEpisode(c: Context<AppEnv>, id: number): Promise<boolean> {
+  const deleted = await deleteEpisode(c.env.DB, id);
+  if (!deleted) return false;
+  // Best-effort R2 cleanup: a failed object delete must not strand the DB row,
+  // which is already gone. Log and move on so the episode can't reappear.
+  try {
+    await c.env.AUDIO.delete(deleted.audio_key);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "r2 delete failed", key: deleted.audio_key, error: String(err) }));
+  }
+  return true;
+}
+
+app.post("/api/episodes/:id/delete", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid episode id" }, 400);
+  const ok = await removeEpisode(c, id);
+  if (!ok) return c.json({ error: "not found" }, 404);
+  return c.redirect("/", 303);
+});
+
+app.delete("/api/episodes/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid episode id" }, 400);
+  const ok = await removeEpisode(c, id);
+  if (!ok) return c.json({ error: "not found" }, 404);
+  return c.json({ deleted: id });
 });
 
 // ---- synthesis worker (poller) API ----

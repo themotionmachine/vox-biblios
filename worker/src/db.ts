@@ -54,6 +54,43 @@ export async function listEpisodes(db: D1Database, feedId: number, limit = 100):
   return results;
 }
 
+export async function getEpisode(db: D1Database, id: number): Promise<Episode | null> {
+  return db.prepare("SELECT * FROM episodes WHERE id = ?").bind(id).first<Episode>();
+}
+
+export async function updateEpisode(
+  db: D1Database,
+  id: number,
+  meta: { title: string; description: string },
+): Promise<Episode | null> {
+  return db
+    .prepare(
+      `UPDATE episodes SET title = ?, description = ? WHERE id = ? RETURNING *`,
+    )
+    .bind(meta.title, meta.description, id)
+    .first<Episode>();
+}
+
+/**
+ * Delete an episode and the queue item that produced it (its episode_id points
+ * here), returning the R2 audio_key so the caller can remove the object. The two
+ * deletes run as one batch so the feed and queue can't diverge. The queue row is
+ * dropped first because queue_items.episode_id REFERENCES episodes(id) and D1
+ * enforces foreign keys — deleting the episode while the row still points at it
+ * would fail. Returns null if no episode matched.
+ */
+export async function deleteEpisode(
+  db: D1Database,
+  id: number,
+): Promise<{ audio_key: string } | null> {
+  const results = await db.batch<{ audio_key: string }>([
+    db.prepare("DELETE FROM queue_items WHERE episode_id = ?").bind(id),
+    db.prepare("DELETE FROM episodes WHERE id = ? RETURNING audio_key").bind(id),
+  ]);
+  const row = results[1]?.results[0];
+  return row ? { audio_key: row.audio_key } : null;
+}
+
 export async function listQueueItems(
   db: D1Database,
   status: QueueStatus | null,

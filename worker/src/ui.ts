@@ -33,11 +33,24 @@ function queueRow(item: QueueItem): string {
 }
 
 function episodeRow(ep: Episode, audioBase: string): string {
+  const id = esc(String(ep.id));
+  const actions = `<details class="edit">
+    <summary>edit</summary>
+    <form method="post" action="/api/episodes/${id}">
+      <input name="title" type="text" value="${esc(ep.title)}" />
+      <textarea name="description" rows="3">${esc(ep.description)}</textarea>
+      <button type="submit">Save</button>
+    </form>
+  </details>
+  <form method="post" action="/api/episodes/${id}/delete" onsubmit="return confirm('Delete this episode? This removes its audio too.')">
+    <button class="danger">delete</button>
+  </form>`;
   return `<tr>
     <td>${esc(ep.title)}</td>
     <td><a href="${esc(`${audioBase}/${ep.audio_key}`)}">mp3</a></td>
     <td>${ep.audio_bytes ? (ep.audio_bytes / 1024 / 1024).toFixed(1) + " MB" : "—"}</td>
     <td>${esc(ep.published_at)}</td>
+    <td class="actions">${actions}</td>
   </tr>`;
 }
 
@@ -66,6 +79,13 @@ export function renderHome(
   input, textarea, button { font: inherit; padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); background: transparent; }
   button { cursor: pointer; width: fit-content; padding-inline: 1rem; }
   .muted { opacity: 0.65; font-size: 0.85rem; }
+  td.actions { white-space: nowrap; display: flex; gap: 0.5rem; align-items: flex-start; }
+  td.actions button { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
+  td.actions form { margin: 0; }
+  details.edit summary { cursor: pointer; font-size: 0.8rem; opacity: 0.8; list-style: none; }
+  details.edit[open] { padding: 0.4rem 0; }
+  details.edit form { display: grid; gap: 0.4rem; margin-top: 0.4rem; min-width: 18rem; }
+  button.danger { color: #b3261e; border-color: color-mix(in srgb, #b3261e 40%, transparent); }
 </style>
 </head>
 <body>
@@ -90,7 +110,7 @@ ${queue.length === 0
 <h2>Episodes</h2>
 ${episodes.length === 0
     ? html`<p class="muted">No episodes yet.</p>`
-    : raw(`<table><thead><tr><th>title</th><th>audio</th><th>size</th><th>published (UTC)</th></tr></thead><tbody>${episodes
+    : raw(`<table><thead><tr><th>title</th><th>audio</th><th>size</th><th>published (UTC)</th><th></th></tr></thead><tbody>${episodes
         .map((ep) => episodeRow(ep, audioBase))
         .join("")}</tbody></table>`)}
 </body>
