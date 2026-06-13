@@ -71,6 +71,43 @@ class AWSConfig:
 
 
 @dataclass
+class StorageConfig:
+    """Object-storage configuration (AWS S3 or Cloudflare R2).
+
+    R2 is S3-compatible, so both backends use boto3; R2 just needs an
+    endpoint_url override and an explicit public base URL.
+    """
+    backend: str = "s3"  # "s3" | "r2"
+    bucket: str = "vox-biblios"
+    region: str = "us-east-1"
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    endpoint_url: Optional[str] = None  # required for r2
+    public_url: Optional[str] = None    # required for r2; optional override for s3
+
+    def validate(self):
+        """Validate that required storage credentials/settings are set."""
+        if self.backend == "s3":
+            if not self.access_key or not self.secret_key:
+                raise ValueError("AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables must be set")
+        elif self.backend == "r2":
+            if not self.access_key or not self.secret_key:
+                raise ValueError("R2_ACCESS_KEY and R2_SECRET_KEY environment variables must be set")
+            if not self.endpoint_url:
+                raise ValueError("R2_ACCOUNT_ID environment variable must be set for the r2 backend")
+            if not self.public_url:
+                raise ValueError("R2_PUBLIC_URL environment variable must be set for the r2 backend")
+        else:
+            raise ValueError(f"Unknown STORAGE_BACKEND '{self.backend}' (expected 's3' or 'r2')")
+
+    def get_public_url(self, object_key: str) -> str:
+        """Build the public URL for a stored object."""
+        if self.public_url:
+            return f"{self.public_url.rstrip('/')}/{object_key}"
+        return f"https://s3.{self.region}.amazonaws.com/{self.bucket}/{object_key}"
+
+
+@dataclass
 class PocketTTSConfig:
     """Pocket TTS configuration settings."""
     voice: str = "alba"
@@ -103,6 +140,7 @@ class AppConfig:
 class Config:
     """Main configuration class."""
     aws: AWSConfig
+    storage: StorageConfig
     app: AppConfig
     tts: TTSConfig
     pocket_tts: PocketTTSConfig
@@ -124,7 +162,32 @@ class Config:
             polly_voice_id=os.environ.get("POLLY_VOICE_ID", "Joanna"),
             polly_output_key_prefix=os.environ.get("POLLY_KEY_PREFIX", "audio")
         )
-        
+
+        # Initialize storage configuration (S3 by default; R2 as an alternative).
+        # Credentials are optional during init and validated when publishing.
+        storage_backend = os.environ.get("STORAGE_BACKEND", "s3").lower()
+        if storage_backend == "r2":
+            r2_account_id = os.environ.get("R2_ACCOUNT_ID")
+            self.storage = StorageConfig(
+                backend="r2",
+                bucket=os.environ.get("R2_BUCKET", "vox-biblios"),
+                region="auto",
+                access_key=os.environ.get("R2_ACCESS_KEY"),
+                secret_key=os.environ.get("R2_SECRET_KEY"),
+                endpoint_url=(f"https://{r2_account_id}.r2.cloudflarestorage.com"
+                              if r2_account_id else None),
+                public_url=os.environ.get("R2_PUBLIC_URL"),
+            )
+        else:
+            self.storage = StorageConfig(
+                backend="s3",
+                bucket=self.aws.s3_bucket,
+                region=self.aws.region,
+                access_key=self.aws.access_key,
+                secret_key=self.aws.secret_key,
+                public_url=os.environ.get("S3_PUBLIC_URL"),
+            )
+
         # Initialize application configuration
         log_level_name = os.environ.get("LOG_LEVEL", "INFO")
         log_level = getattr(logging, log_level_name.upper(), logging.INFO)
@@ -159,7 +222,7 @@ class Config:
     @property
     def get_rss_url(self) -> str:
         """Get the full URL for the RSS feed."""
-        return f"https://s3.{self.aws.region}.amazonaws.com/{self.aws.s3_bucket}/{self.app.rss_filename}"
+        return self.storage.get_public_url(self.app.rss_filename)
 
 
 # Lazy-loaded singleton configuration instance

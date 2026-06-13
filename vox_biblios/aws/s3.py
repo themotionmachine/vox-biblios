@@ -10,7 +10,7 @@ import backoff
 
 from botocore.exceptions import ClientError
 
-from vox_biblios.aws.aws_client import get_s3_client
+from vox_biblios.aws.aws_client import get_storage_client
 from vox_biblios.config import config
 from vox_biblios.utils.logging import get_logger
 from vox_biblios.exceptions import S3Error
@@ -28,8 +28,8 @@ class S3Service:
         Args:
             bucket_name: S3 bucket name (default from config)
         """
-        self.bucket_name = bucket_name or config.aws.s3_bucket
-        self.client = get_s3_client()
+        self.bucket_name = bucket_name or config.storage.bucket
+        self.client = get_storage_client()
         
         logger.debug(f"Initialized S3Service with bucket_name={self.bucket_name}")
     
@@ -63,12 +63,12 @@ class S3Service:
         
         try:
             self._upload_file_with_retry(file_path, object_key, content_type)
-            
-            # Return the S3 URL
-            s3_url = f"https://s3.{config.aws.region}.amazonaws.com/{self.bucket_name}/{object_key}"
-            logger.info(f"File uploaded successfully to {s3_url}")
-            
-            return s3_url
+
+            # Return the public URL for the configured storage backend
+            public_url = config.storage.get_public_url(object_key)
+            logger.info(f"File uploaded successfully to {public_url}")
+
+            return public_url
             
         except Exception as e:
             error_msg = f"Failed to upload file {file_path} to S3: {str(e)}"
