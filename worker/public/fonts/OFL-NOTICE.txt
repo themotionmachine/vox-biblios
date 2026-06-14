@@ -1,0 +1,7 @@
+IBM Plex Mono — Copyright © 2017 IBM Corp.
+Licensed under the SIL Open Font License, Version 1.1.
+https://github.com/IBM/plex  ·  https://openfontlicense.org
+
+Vendored here (latin subset, weights 400 and 600) so the control-plane UI
+serves it same-origin instead of hot-linking a CDN. Files sourced from
+@fontsource/ibm-plex-mono.

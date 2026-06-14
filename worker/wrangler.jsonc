@@ -10,6 +10,10 @@
   },
   // Custom domain on the activationlayer.org zone; DNS record is created on deploy.
   "routes": [{ "pattern": "vb.activationlayer.org", "custom_domain": true }],
+  // Static assets (self-hosted UI fonts under /fonts/*). Paths that match a file
+  // are served directly; everything else falls through to the Worker, so the
+  // Hono routes ("/", "/api/*", "/feed*", …) are unaffected.
+  "assets": { "directory": "./public" },
   "vars": {
     // Public base URL of the R2 bucket; episode enclosure URLs are <base>/<audio_key>.
     "PUBLIC_AUDIO_BASE": "https://pub-ac39464920f04d719bf1bd1a61aeb453.r2.dev",
