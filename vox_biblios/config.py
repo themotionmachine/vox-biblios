@@ -108,6 +108,27 @@ class StorageConfig:
 
 
 @dataclass
+class ControlPlaneConfig:
+    """Cloudflare control-plane (Worker queue) settings.
+
+    The `cloudflare` target submits work to the control-plane queue at
+    `url` and lets the host-side poller synthesize it later, so the CLI
+    only needs the queue's bearer token — never AWS/R2 credentials.
+    """
+    url: str = "https://vb.activationlayer.org"
+    token: Optional[str] = None  # bearer; stored as CONTROL_PLANE_TOKEN
+
+    def validate(self):
+        """Validate that the control plane can be reached and authenticated."""
+        if not self.url:
+            raise ValueError("CONTROL_PLANE_URL must be set for the cloudflare target")
+        if not self.token:
+            raise ValueError(
+                "CONTROL_PLANE_TOKEN must be set to publish to the Cloudflare control plane"
+            )
+
+
+@dataclass
 class PocketTTSConfig:
     """Pocket TTS configuration settings."""
     voice: str = "alba"
@@ -141,9 +162,16 @@ class Config:
     """Main configuration class."""
     aws: AWSConfig
     storage: StorageConfig
+    control_plane: ControlPlaneConfig
     app: AppConfig
     tts: TTSConfig
     pocket_tts: PocketTTSConfig
+    target: str
+
+    # Where `process` publishes by default. cloudflare = control-plane queue
+    # (host poller synthesizes), s3 = legacy direct upload + RSS, local = MP3s
+    # to a local dir (no network). Overridable per-run with --target.
+    DEFAULT_TARGET = "cloudflare"
 
     def __init__(self):
         """Initialize configuration from environment variables."""
@@ -187,6 +215,17 @@ class Config:
                 secret_key=self.aws.secret_key,
                 public_url=os.environ.get("S3_PUBLIC_URL"),
             )
+
+        # Initialize control-plane configuration (the default publish target).
+        # Token is optional during init and validated when the cloudflare
+        # target actually publishes.
+        self.control_plane = ControlPlaneConfig(
+            url=os.environ.get("CONTROL_PLANE_URL", "https://vb.activationlayer.org"),
+            token=os.environ.get("CONTROL_PLANE_TOKEN"),
+        )
+
+        # Default publish target for `process` (overridable with --target).
+        self.target = os.environ.get("VB_TARGET", self.DEFAULT_TARGET).lower()
 
         # Initialize application configuration
         log_level_name = os.environ.get("LOG_LEVEL", "INFO")
