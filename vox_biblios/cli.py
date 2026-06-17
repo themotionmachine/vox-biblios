@@ -43,10 +43,11 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
           vox-biblios                           # Process text files with default provider (pocket-tts)
           vox-biblios process texts/            # Process all text files in the texts/ directory
           vox-biblios process article.txt       # Process a single text file
-          vox-biblios process https://example.com/article  # Process a URL
-          vox-biblios process - < article.txt   # Process text from stdin
+          vox-biblios process https://example.com/article  # Queue a URL to the Cloudflare control plane (default)
+          vox-biblios process - < article.txt   # Queue text from stdin
+          vox-biblios process --target s3 article.txt       # Legacy: synthesize + upload to S3 directly
           vox-biblios process --provider kokoro # Use Kokoro (local MLX) for TTS
-          vox-biblios process --output-dir out/ # Local mode: write MP3s, skip AWS/RSS
+          vox-biblios process --output-dir out/ # Local mode: write MP3s, no publishing
           vox-biblios process --dry-run texts/  # Show cleaned text without synthesizing
           vox-biblios process --json texts/     # Machine-readable output
           vox-biblios voices                    # List available voices for each provider
@@ -88,11 +89,27 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help='Voice to use for TTS (provider-specific)'
     )
     process_parser.add_argument(
+        '--target',
+        type=str,
+        choices=['cloudflare', 's3', 'local'],
+        default=None,
+        help=(f'Where to publish: cloudflare (control-plane queue, default), '
+              f's3 (legacy direct upload + RSS), or local (write MP3s, needs '
+              f'--output-dir). Default: {config.target}')
+    )
+    process_parser.add_argument(
+        '--feed',
+        type=str,
+        default=None,
+        metavar='SLUG',
+        help='Control-plane feed slug to submit to (cloudflare target only; default feed if omitted)'
+    )
+    process_parser.add_argument(
         '--output-dir',
         type=str,
         default=None,
         metavar='DIR',
-        help='Write MP3s to a local directory and skip S3 upload / RSS update (no AWS needed)'
+        help='Write MP3s to a local directory and skip publishing (implies --target local; no network/AWS needed)'
     )
     process_parser.add_argument(
         '--dry-run',
@@ -133,6 +150,8 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
                              help='Write the config from flags without prompting')
     init_parser.add_argument('--force', action='store_true',
                              help='Overwrite an existing config file without asking')
+    init_parser.add_argument('--control-plane-url', default='https://vb.activationlayer.org')
+    init_parser.add_argument('--control-plane-token', default=None)
     init_parser.add_argument('--aws-access-key', default=None)
     init_parser.add_argument('--aws-secret-key', default=None)
     init_parser.add_argument('--aws-region', default='us-east-1')
@@ -225,6 +244,166 @@ def _dry_run(input_source: str, is_url: bool, json_mode: bool) -> int:
     return 0
 
 
+def _gather_text_items(folder: str) -> list:
+    """Read each .txt file in a folder as a control-plane submission.
+
+    Raw (un-preprocessed) text is sent — the poller re-runs the full CLI, which
+    preprocesses identically to a direct run, so sending raw keeps the two paths
+    byte-equivalent. Title is the file stem, matching folder-mode S3 behavior.
+    """
+    from vox_biblios.core.text_processor import TextProcessor
+    tp = TextProcessor()
+    items = []
+    for path in sorted(Path(folder).glob('*.txt')):
+        try:
+            text = tp._read_file_with_encoding(path)
+        except Exception as e:
+            logger.warning(f"Skipping {path.name}: {e}")
+            continue
+        if not text.strip():
+            continue
+        items.append({
+            'kind': 'text',
+            'payload': text,
+            'title': path.stem,
+            'source': path.name,
+            'filename': path.name,
+        })
+    return items
+
+
+def _utc_age_minutes(ts: Optional[str]) -> Optional[float]:
+    """Age in minutes of a UTC timestamp string, or None if unparseable."""
+    if not ts:
+        return None
+    from datetime import datetime, timezone
+    # SQLite datetime() yields "YYYY-MM-DD HH:MM:SS" (UTC); accept ISO 'T' too.
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            dt = datetime.strptime(ts, fmt).replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+        except ValueError:
+            continue
+    return None
+
+
+def _warn_if_queue_unattended(client, json_mode: bool) -> None:
+    """Best-effort warning if the queue suggests the poller isn't draining it,
+    so a submission doesn't silently sit unsynthesized (issue #6, open Q4)."""
+    try:
+        stats = client.stats()
+    except Exception as e:
+        logger.debug(f"poller-liveness check skipped: {e}")
+        return
+
+    reasons = []
+    if stats.get('stale_synthesizing', 0) > 0:
+        reasons.append(f"{stats['stale_synthesizing']} item(s) stuck mid-synthesis")
+    age_min = _utc_age_minutes(stats.get('oldest_queued_at'))
+    if age_min is not None and age_min >= 15:
+        reasons.append(f"oldest queued item is {int(age_min)} min old")
+
+    if reasons:
+        msg = ("the control-plane poller may not be running ("
+               + "; ".join(reasons) + "). Your item will queue but won't "
+               "publish until the host poller drains it.")
+        if json_mode:
+            logger.warning(msg)  # keep JSON stdout clean
+        else:
+            print(Fore.YELLOW + "Warning: " + msg + Style.RESET_ALL)
+
+
+def _submit_to_control_plane(input_source: str, is_url: bool,
+                             args: argparse.Namespace, json_mode: bool) -> int:
+    """Thin-submit the input to the Cloudflare control-plane queue.
+
+    No synthesis happens here — the host poller claims and synthesizes later.
+    Errors (rather than silently falling back to S3) when the control plane
+    isn't configured, since a silent wrong-feed publish is the bug issue #6 fixes.
+    """
+    from vox_biblios.adapters.control_plane import ControlPlaneClient, ControlPlaneError
+
+    cp = config.control_plane
+    if not cp.token:
+        if json_mode:
+            print(json.dumps({'status': 'error', 'error': 'CONTROL_PLANE_TOKEN not set'}))
+        else:
+            print(Fore.RED + "Error: Cloudflare control plane is the default publish "
+                  "target, but CONTROL_PLANE_TOKEN is not set." + Style.RESET_ALL)
+            print("  • Configure it:  vox-biblios config init  "
+                  "(sets CONTROL_PLANE_URL + CONTROL_PLANE_TOKEN)")
+            print("  • Or publish another way:  --target s3  (legacy direct)  "
+                  "or  --target local --output-dir DIR")
+        return 1
+
+    if is_url:
+        submissions = [{'kind': 'url', 'payload': input_source, 'title': None,
+                        'source': input_source}]
+    else:
+        submissions = _gather_text_items(input_source)
+        if not submissions:
+            msg = f"No non-empty .txt files found in {input_source}"
+            if json_mode:
+                print(json.dumps({'status': 'error', 'error': msg}))
+            else:
+                print(Fore.YELLOW + msg + Style.RESET_ALL)
+            return 1
+
+    if not json_mode:
+        feed_desc = f" (feed: {args.feed})" if args.feed else ""
+        print(f"Target: cloudflare control plane at {cp.url}{feed_desc}")
+
+    client = ControlPlaneClient(cp.url, cp.token)
+    _warn_if_queue_unattended(client, json_mode)
+
+    queued, failures, submitted_files = [], [], []
+    for sub in submissions:
+        try:
+            if sub['kind'] == 'url':
+                res = client.submit_url(sub['payload'], feed=args.feed)
+            else:
+                res = client.submit_text(sub['payload'], title=sub['title'], feed=args.feed)
+            queued.append({'id': res.get('id'), 'status': res.get('status', 'queued'),
+                           'source': sub['source']})
+            if sub.get('filename'):
+                submitted_files.append(sub['filename'])
+        except ControlPlaneError as e:
+            failures.append({'source': sub['source'], 'error': str(e)})
+
+    # Drain the folder: delete only the source files we successfully queued
+    # (mirrors the S3 path's "delete on success" semantics).
+    if submitted_files:
+        from vox_biblios.core.text_processor import TextProcessor
+        TextProcessor().delete_files(input_source, submitted_files)
+
+    exit_code = 0 if not failures else (2 if queued else 1)
+
+    if json_mode:
+        print(json.dumps({
+            'status': ['success', 'failure', 'partial'][exit_code],
+            'target': 'cloudflare',
+            'feed': args.feed,
+            'queued': queued,
+            'failures': failures,
+        }, indent=2))
+    else:
+        for q in queued:
+            print(Fore.GREEN + f"  ✓ queued {q['source']}" + Style.RESET_ALL
+                  + f" -> {q['id']} ({q['status']})")
+        for f in failures:
+            print(Fore.RED + f"  ✗ {f['source']}: {f['error']}" + Style.RESET_ALL)
+        if exit_code == 0:
+            print(Fore.GREEN + f"Submitted {len(queued)} item(s) to the control plane."
+                  + Style.RESET_ALL)
+            print(f"The host poller will synthesize and publish to: {cp.url}")
+        elif exit_code == 2:
+            print(Fore.YELLOW + "Submitted with some failures." + Style.RESET_ALL)
+        else:
+            print(Fore.RED + "Submission failed." + Style.RESET_ALL)
+
+    return exit_code
+
+
 def process_command(args: argparse.Namespace) -> int:
     """
     Execute process command.
@@ -255,6 +434,27 @@ def process_command(args: argparse.Namespace) -> int:
         if args.dry_run:
             return _dry_run(effective_input, is_url, json_mode)
 
+        # Resolve the publish target. --output-dir is the local destination, so
+        # its presence forces local mode regardless of --target (this is also
+        # how the poller invokes us). Otherwise: explicit flag, then config.
+        if args.output_dir:
+            target = 'local'
+        else:
+            target = args.target or config.target
+
+        # The cloudflare target doesn't synthesize here — it submits the raw
+        # input to the control-plane queue and the host poller synthesizes later.
+        if target == 'cloudflare':
+            return _submit_to_control_plane(effective_input, is_url, args, json_mode)
+
+        if target == 'local' and not args.output_dir:
+            msg = "--target local requires --output-dir DIR (where MP3s are written)."
+            if json_mode:
+                print(json.dumps({'status': 'error', 'error': msg}))
+            else:
+                print(Fore.RED + f"Error: {msg}" + Style.RESET_ALL)
+            return 1
+
         effective_provider = args.provider or config.tts.default_provider
         if not json_mode:
             source_desc = "URL" if is_url else "folder"
@@ -262,8 +462,10 @@ def process_command(args: argparse.Namespace) -> int:
             print(f"Using TTS provider: {effective_provider}")
             if args.voice:
                 print(f"Using voice: {args.voice}")
-            if args.output_dir:
+            if target == 'local':
                 print(f"Local mode: writing MP3s to {args.output_dir}")
+            else:
+                print("Target: s3 (legacy direct upload + RSS)")
 
         manager = PodcastManager(
             provider=args.provider,
@@ -424,8 +626,19 @@ def _write_config_file(config_file: Path, values: dict) -> None:
     config_content = f"""# Vox Biblios Configuration
 # Generated by: vox-biblios config init
 
-# AWS Credentials (required for S3/RSS publishing and Polly; not needed
-# for local mode: vox-biblios process --output-dir DIR)
+# Default publish target for `vox-biblios process`:
+#   cloudflare  submit to the control-plane queue (host poller synthesizes) [default]
+#   s3          legacy direct upload + RSS (needs AWS creds below)
+#   local       write MP3s locally (process --output-dir DIR)
+VB_TARGET=cloudflare
+
+# Cloudflare control plane (VB_TARGET=cloudflare). The token is the queue's
+# bearer (the worker's API_TOKEN secret); the poller reads the same value.
+CONTROL_PLANE_URL={values['control_plane_url']}
+CONTROL_PLANE_TOKEN={values['control_plane_token']}
+
+# AWS Credentials (required for VB_TARGET=s3 publishing and the Polly provider;
+# not needed for cloudflare or local targets)
 AWS_ACCESS_KEY={values['aws_access_key']}
 AWS_SECRET_KEY={values['aws_secret_key']}
 
@@ -511,6 +724,8 @@ def config_command(args: argparse.Namespace) -> int:
         try:
             if args.non_interactive:
                 values = {
+                    'control_plane_url': args.control_plane_url,
+                    'control_plane_token': args.control_plane_token or '',
                     'aws_access_key': args.aws_access_key or '',
                     'aws_secret_key': args.aws_secret_key or '',
                     'aws_region': args.aws_region,
@@ -521,11 +736,14 @@ def config_command(args: argparse.Namespace) -> int:
                 }
             else:
                 print("\nEnter your configuration values (press Enter to use defaults).")
-                print("AWS credentials are optional if you only use local mode (--output-dir).\n")
+                print("The default target is the Cloudflare control plane; set its token below.")
+                print("AWS credentials are only needed for --target s3 or the Polly provider.\n")
 
                 values = {
-                    'aws_access_key': input("AWS_ACCESS_KEY (blank for local-only): ").strip(),
-                    'aws_secret_key': input("AWS_SECRET_KEY (blank for local-only): ").strip(),
+                    'control_plane_url': input(f"CONTROL_PLANE_URL [{args.control_plane_url}]: ").strip() or args.control_plane_url,
+                    'control_plane_token': input("CONTROL_PLANE_TOKEN (queue bearer token): ").strip(),
+                    'aws_access_key': input("AWS_ACCESS_KEY (blank unless using --target s3): ").strip(),
+                    'aws_secret_key': input("AWS_SECRET_KEY (blank unless using --target s3): ").strip(),
                     'aws_region': input(f"AWS_REGION [{args.aws_region}]: ").strip() or args.aws_region,
                     's3_bucket': input(f"S3_BUCKET [{args.s3_bucket}]: ").strip() or args.s3_bucket,
                     'polly_voice': input(f"POLLY_VOICE_ID [{args.polly_voice}]: ").strip() or args.polly_voice,
@@ -536,8 +754,10 @@ def config_command(args: argparse.Namespace) -> int:
             _write_config_file(config_file, values)
 
             print(Fore.GREEN + f"\nConfiguration file created at: {config_file}" + Style.RESET_ALL)
-            if not values['aws_access_key']:
-                print(Fore.YELLOW + "No AWS credentials set: use --output-dir for local processing." + Style.RESET_ALL)
+            if not values['control_plane_token']:
+                print(Fore.YELLOW + "No CONTROL_PLANE_TOKEN set: the default cloudflare target "
+                      "will error until you add one (or use --target s3 / --output-dir)."
+                      + Style.RESET_ALL)
             print("\nYou can edit this file anytime with:")
             print("  vox-biblios config edit")
 

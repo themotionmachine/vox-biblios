@@ -189,7 +189,13 @@ vox-biblios config edit  # Edit configuration in your default editor
 
 ### Available Configuration Variables
 
-AWS variables (required only for S3/RSS publishing or the Polly provider):
+Publish target (see [Publish targets](#publish-targets)):
+
+- `VB_TARGET`: Default destination for `process` — `cloudflare` (default), `s3`, or `local`
+- `CONTROL_PLANE_URL`: Control-plane base URL (default: `https://vb.activationlayer.org`)
+- `CONTROL_PLANE_TOKEN`: Control-plane queue bearer token (required for the `cloudflare` target)
+
+AWS variables (required only for the `s3` target or the Polly provider):
 
 - `AWS_ACCESS_KEY`: Your AWS access key
 - `AWS_SECRET_KEY`: Your AWS secret key
@@ -246,9 +252,31 @@ vox-biblios process https://example.com/article
 cat article.txt | vox-biblios process -
 ```
 
+### Publish targets
+
+`process` chooses where to publish via `--target` (default: `cloudflare`,
+overridable with `VB_TARGET` in your config):
+
+| Target | What it does |
+|---|---|
+| `cloudflare` *(default)* | Submits the URL/text to the [control-plane](worker/README.md) queue at `CONTROL_PLANE_URL`; the host poller synthesizes and publishes to `vb.activationlayer.org`. Needs `CONTROL_PLANE_TOKEN`. No synthesis or AWS on this path. |
+| `s3` | Legacy direct mode: synthesizes locally, uploads the MP3, and regenerates the RSS feed in S3/R2. Needs AWS (or R2) credentials. |
+| `local` | Writes MP3s to `--output-dir` and skips publishing entirely. No network/AWS. |
+
+```bash
+vox-biblios process https://example.com/article          # -> control-plane queue (default)
+vox-biblios process notes.txt --feed essays              # -> a specific control-plane feed
+vox-biblios process notes.txt --target s3                # -> legacy S3 direct upload + RSS
+vox-biblios process notes.txt --target local --output-dir ~/Podcasts
+```
+
+If `cloudflare` is the default but `CONTROL_PLANE_TOKEN` isn't set, `process`
+**errors with guidance** rather than silently falling back to the legacy S3 feed.
+
 ### Local Mode (no AWS)
 
-Write MP3s to a local folder instead of uploading to S3/RSS:
+Write MP3s to a local folder instead of publishing (`--output-dir` implies
+`--target local`):
 
 ```bash
 vox-biblios process notes.txt --output-dir ~/Podcasts
