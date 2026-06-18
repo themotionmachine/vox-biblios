@@ -3,7 +3,6 @@ __pycache__/audio_processing.cpython-37.pyc
 *.pyc
 *.log
 text-q/*
-<<<<<<< HEAD
 *.png
 .DS_Store
 .DS_Store
@@ -90,7 +89,6 @@ vox_biblios_main.py
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
-=======
 .DS_Store
 uv.lock
 vox_biblios/.env.local
@@ -101,7 +99,6 @@ vox_biblios.egg-info/requires.txt
 vox_biblios.egg-info/SOURCES.txt
 vox_biblios.egg-info/top_level.txt
 .env.local
->>>>>>> major-refactor
 alfred_voxbiblios.sh
 .vscode/settings.json
 CLAUDE.md
