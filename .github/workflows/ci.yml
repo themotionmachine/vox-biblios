@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same ref when a new commit lands —
+# saves Actions minutes and keeps the status checks current.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Opt the action-runner runtime (actions/checkout, actions/setup-*) into
+# Node 24 ahead of GitHub's forced cutover. Separate from the Node/Python
+# versions we pin below for our own commands.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  worker:
+    name: Worker typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Node 22 LTS. wrangler 4 + tsc only need a current LTS; this
+          # keeps CI on a supported, reproducible runtime.
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        # = wrangler types && tsc --noEmit. `wrangler types` is local codegen
+        # from wrangler.jsonc — no Cloudflare auth or network required.
+        run: npm run check
+
+  python:
+    name: Python syntax check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Floor of the project's requires-python (>=3.10).
+          python-version: '3.10'
+
+      # No automated test suite exists for the Python CLI yet, and a real
+      # `import vox_biblios` would force installing the full heavy dep tree
+      # (boto3/nltk/spacy + the kokoro wheel-URL pin) — slow and flaky. A
+      # byte-compile is the cheap mechanical floor: it catches syntax errors
+      # across the CLI and poller without installing anything. Promote this
+      # to `pytest` once a suite lands under a tests/ dir.
+      - name: Byte-compile (syntax check)
+        run: python -m compileall vox_biblios poller
