@@ -47,7 +47,7 @@ jobs:
         run: npm run check
 
   python:
-    name: Python syntax check
+    name: Python tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -59,11 +59,20 @@ jobs:
           # Floor of the project's requires-python (>=3.10).
           python-version: '3.10'
 
-      # No automated test suite exists for the Python CLI yet, and a real
-      # `import vox_biblios` would force installing the full heavy dep tree
-      # (boto3/nltk/spacy + the kokoro wheel-URL pin) — slow and flaky. A
-      # byte-compile is the cheap mechanical floor: it catches syntax errors
-      # across the CLI and poller without installing anything. Promote this
-      # to `pytest` once a suite lands under a tests/ dir.
+      # Install ONLY the light `test` extra — deliberately not `pip install .`,
+      # which would drag in the full heavy dep tree (boto3/goose3/pandas/scipy +
+      # the kokoro wheel-URL pin) and make CI slow and flaky. The suite is
+      # hermetic: the heavy seams (TTS backends, ffmpeg, scraping, AWS) are
+      # mocked in tests/conftest.py, so this minimal set is all pytest needs.
+      # Mirrors the `test` extra in pyproject.toml (listed explicitly so this
+      # works on 3.10, which predates tomllib).
+      - name: Install test dependencies
+        run: pip install pytest colorama python-dotenv nltk
+
+      # Byte-compile keeps the cheap syntax floor over the whole CLI + poller
+      # (most of which the hermetic suite doesn't import), then run the suite.
       - name: Byte-compile (syntax check)
         run: python -m compileall vox_biblios poller
+
+      - name: Run tests
+        run: python -m pytest
