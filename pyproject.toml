@@ -44,6 +44,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Light, hermetic test deps — deliberately NOT a superset of the core deps.
+# CI installs only these (not `pip install .`), so the suite stays free of
+# boto3/goose3/spacy/kokoro/ffmpeg. The heavy seams are mocked in tests/conftest.py.
+test = [
+    "pytest",
+    "colorama",
+    "python-dotenv",
+    "nltk",
+]
 kokoro = [
     "mlx-audio",
     "misaki[en]",
@@ -54,3 +63,9 @@ kokoro = [
 
 [project.scripts]
 vox-biblios = "vox_biblios.cli:main"
+
+[tool.pytest.ini_options]
+# Run against the source tree without installing the package (keeps CI light).
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
