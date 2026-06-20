@@ -616,6 +616,8 @@ def process_command(args: argparse.Namespace) -> int:
                         'title': ep['title'],
                         'url': ep['url'],
                         'description': ep['description'],
+                        'part': ep.get('part', 1),
+                        'parts': ep.get('parts', 1),
                     }
                     for ep in result.episodes
                 ],

@@ -179,33 +179,29 @@ class Client:
             raise TransportError(f"claim returned {status}: {body[:200]!r}")
         return json.loads(body)
 
-    def upload_audio(self, item_id: str, audio_path: Path) -> int:
+    def upload_audio(self, item_id: str, part: int, audio_path: Path) -> dict[str, Any]:
+        """Upload one part's audio. Returns the worker's {audio_key, audio_bytes}."""
         data = audio_path.read_bytes()
         status, body = self._request(
             "PUT",
-            f"/api/worker/items/{item_id}/audio",
+            f"/api/worker/items/{item_id}/audio?part={part}",
             data=data,
             content_type="audio/mpeg",
             timeout=300.0,
         )
         if status != 200:
             raise TransportError(f"upload returned {status}: {body[:200]!r}")
-        return json.loads(body).get("audio_bytes", len(data))
+        return json.loads(body)
 
     def complete(
         self,
         item_id: str,
-        title: Optional[str],
-        description: str,
-        duration: Optional[int],
+        parts: list[dict[str, Any]],
         tts_provider: Optional[str] = None,
         tts_voice: Optional[str] = None,
     ) -> None:
-        payload: dict[str, Any] = {"description": description}
-        if title:
-            payload["title"] = title
-        if duration:
-            payload["duration_secs"] = duration
+        """Publish an item as one episode per part (a normal article has one part)."""
+        payload: dict[str, Any] = {"parts": parts}
         # Record what we actually synthesized with, for the episode's audit trail.
         if tts_provider:
             payload["tts_provider"] = tts_provider
@@ -236,8 +232,12 @@ def _extract_json(stdout: str) -> dict[str, Any]:
     return obj
 
 
-def synthesize(cfg: Config, item: dict[str, Any], tmp_dir: Path) -> tuple[Path, Optional[str], str]:
-    """Run the CLI in local mode and return (mp3_path, title, description)."""
+def synthesize(cfg: Config, item: dict[str, Any], tmp_dir: Path) -> list[dict[str, Any]]:
+    """Run the CLI in local mode and return one part-episode per output MP3.
+
+    A normal article yields a single entry; a very long one yields several
+    (the CLI splits it). Each entry is {mp3, title, description}.
+    """
     kind = item["kind"]
     cmd = [cfg.bin, "process"]
     stdin_text: Optional[str] = None
@@ -295,16 +295,26 @@ def synthesize(cfg: Config, item: dict[str, Any], tmp_dir: Path) -> tuple[Path, 
         detail = " | ".join(parts) or "no episode produced"
         raise SynthFailure(f"CLI status={status!r} rc={proc.returncode}: {detail}")
 
-    ep = episodes[0]
-    mp3 = Path(ep["url"])  # in --output-dir mode this is the local file path
-    if not mp3.is_file():
-        raise SynthFailure(f"CLI reported success but MP3 missing: {mp3}")
+    n = len(episodes)
+    out: list[dict[str, Any]] = []
+    for ep in episodes:
+        mp3 = Path(ep["url"])  # in --output-dir mode this is the local file path
+        if not mp3.is_file():
+            raise SynthFailure(f"CLI reported success but MP3 missing: {mp3}")
 
-    # For URL items the scraped title is good; for text items prefer the
-    # submitter's title (stdin synthesis would otherwise title it 'stdin').
-    title = ep.get("title") if kind == "url" else (item.get("title") or None)
-    description = ep.get("description") or ""
-    return mp3, title, description
+        part_no = ep.get("part")
+        parts_total = ep.get("parts") or n
+        if kind == "url":
+            # The scraped title already carries any '… Part k of N' suffix.
+            title = ep.get("title")
+        else:
+            # Text/stdin synthesis titles itself 'stdin'; prefer the submitter's
+            # title, re-applying the part suffix when the CLI split the text.
+            base = item.get("title") or ep.get("title")
+            title = (f"{base} — Part {part_no} of {parts_total}"
+                     if base and parts_total and parts_total > 1 and part_no else base)
+        out.append({"mp3": mp3, "title": title, "description": ep.get("description") or ""})
+    return out
 
 
 def probe_duration(mp3: Path) -> Optional[int]:
@@ -338,15 +348,25 @@ def process_one(cfg: Config, client: Client, item: dict[str, Any]) -> None:
     item_id = item["id"]
     tmp_dir = Path(tempfile.mkdtemp(prefix="vb-poller-"))
     try:
-        mp3, title, description = synthesize(cfg, item, tmp_dir)
-        audio_bytes = client.upload_audio(item_id, mp3)
-        duration = probe_duration(mp3)
+        episodes = synthesize(cfg, item, tmp_dir)
+        parts: list[dict[str, Any]] = []
+        for i, ep in enumerate(episodes):
+            up = client.upload_audio(item_id, i, ep["mp3"])
+            parts.append({
+                "audio_key": up["audio_key"],
+                "audio_bytes": up.get("audio_bytes"),
+                "title": ep["title"],
+                "description": ep["description"],
+                "duration_secs": probe_duration(ep["mp3"]),
+            })
         client.complete(
-            item_id, title, description, duration,
+            item_id, parts,
             tts_provider=item.get("effective_tts_provider"),
             tts_voice=item.get("effective_tts_voice"),
         )
-        log(f"published {item_id[:8]} ({audio_bytes} bytes, {duration or '?'}s): {title or '(untitled)'}")
+        total_bytes = sum(p.get("audio_bytes") or 0 for p in parts)
+        suffix = f" in {len(parts)} parts" if len(parts) > 1 else ""
+        log(f"published {item_id[:8]}{suffix} ({total_bytes} bytes): {parts[0]['title'] or '(untitled)'}")
     except SynthFailure as e:
         log(f"FAILED {item_id[:8]}: {e}")
         client.fail(item_id, str(e))  # may raise TransportError; bubble up to loop

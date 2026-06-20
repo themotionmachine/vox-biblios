@@ -5,6 +5,7 @@ import {
   completeQueueItem,
   createFeed,
   deleteEpisode,
+  deleteEpisodesForItem,
   deleteFeed,
   deleteQueueItem,
   failQueueItem,
@@ -13,16 +14,19 @@ import {
   getFeedBySlug,
   getQueueItem,
   getStats,
+  insertEpisode,
   insertQueueItem,
   listEpisodes,
   listFeeds,
   listQueueItems,
+  markQueueItemPublished,
   resolveFeed,
   retryQueueItem,
   setQueueItemAudio,
   updateEpisode,
   updateFeed,
   DEFAULT_FEED_SLUG,
+  type Episode,
   type Feed,
   type QueueStatus,
 } from "./db";
@@ -526,24 +530,53 @@ app.put("/api/worker/items/:id/audio", async (c) => {
     return c.json({ error: `Content-Length must be 1..${MAX_AUDIO_BYTES}` }, 413);
   }
 
-  const key = `${AUDIO_PREFIX}${id}.mp3`;
+  // Optional `?part=k` (k >= 0) stores audio for one part of a multi-part item
+  // under a distinct key; the poller passes the returned key back in `complete`.
+  // Without it, the legacy single-audio path stores `<id>.mp3` on the item.
+  const partRaw = c.req.query("part");
+  let key = `${AUDIO_PREFIX}${id}.mp3`;
+  if (partRaw !== undefined) {
+    const part = Number(partRaw);
+    if (!Number.isInteger(part) || part < 0) {
+      return c.json({ error: "part must be a non-negative integer" }, 400);
+    }
+    key = `${AUDIO_PREFIX}${id}-${part}.mp3`;
+  }
+
   const stored = await c.env.AUDIO.put(key, c.req.raw.body, {
     httpMetadata: { contentType: "audio/mpeg" },
   });
   if (!stored) return c.json({ error: "upload failed" }, 500);
 
-  await setQueueItemAudio(c.env.DB, id, key, stored.size);
+  // Only the legacy single-audio path records the key on the queue item; the
+  // multi-part path tracks per-part keys in the `complete` request instead.
+  if (partRaw === undefined) await setQueueItemAudio(c.env.DB, id, key, stored.size);
   return c.json({ audio_key: key, audio_bytes: stored.size });
 });
+
+// One part of a multi-part item: an already-uploaded audio key plus its metadata.
+interface CompletePart {
+  audio_key?: string;
+  audio_bytes?: number;
+  title?: string;
+  description?: string;
+  duration_secs?: number;
+}
 
 interface CompleteBody {
   title?: string;
   description?: string;
   duration_secs?: number;
-  // The voice the poller actually synthesized with, recorded on the episode.
+  // The voice the poller actually synthesized with, recorded on the episode(s).
   tts_provider?: string;
   tts_voice?: string;
+  // Multi-part articles: one entry per part. When present (and non-empty), each
+  // becomes its own episode and the single-audio fields above are ignored.
+  parts?: CompletePart[];
 }
+
+const cleanDuration = (v: unknown): number | null =>
+  typeof v === "number" && v > 0 ? Math.round(v) : null;
 
 app.post("/api/worker/items/:id/complete", async (c) => {
   const id = c.req.param("id");
@@ -552,19 +585,51 @@ app.post("/api/worker/items/:id/complete", async (c) => {
   if (item.status !== "synthesizing") {
     return c.json({ error: `item is '${item.status}', expected 'synthesizing'` }, 409);
   }
-  if (!item.audio_key) return c.json({ error: "no audio uploaded for this item" }, 409);
 
   const body = await c.req.json<CompleteBody>().catch(() => ({}) as CompleteBody);
-  const title = body.title?.trim() || item.title?.trim() || `Episode ${id.slice(0, 8)}`;
-  const description = body.description?.trim() ?? (item.kind === "url" ? item.payload : "");
-  const duration = typeof body.duration_secs === "number" && body.duration_secs > 0 ? Math.round(body.duration_secs) : null;
+  const ttsProvider = pickStr(body.tts_provider) ?? null;
+  const ttsVoice = pickStr(body.tts_voice) ?? null;
+  const fallbackDescription = item.kind === "url" ? item.payload : "";
 
+  // Multi-part path: one episode per uploaded part.
+  if (Array.isArray(body.parts) && body.parts.length > 0) {
+    for (const [i, part] of body.parts.entries()) {
+      if (!pickStr(part.audio_key)) {
+        return c.json({ error: `part ${i} is missing audio_key` }, 400);
+      }
+    }
+    // Clear any episodes from a prior partial completion so this is idempotent.
+    await deleteEpisodesForItem(c.env.DB, id);
+    const episodes: Episode[] = [];
+    for (const [i, part] of body.parts.entries()) {
+      const ep = await insertEpisode(c.env.DB, {
+        feed_id: item.feed_id,
+        guid: `${id}-${i}`,
+        title: pickStr(part.title) ?? item.title?.trim() ?? `Episode ${id.slice(0, 8)} part ${i + 1}`,
+        description: pickStr(part.description) ?? fallbackDescription,
+        audio_key: part.audio_key as string,
+        audio_bytes: typeof part.audio_bytes === "number" && part.audio_bytes > 0 ? part.audio_bytes : 0,
+        duration_secs: cleanDuration(part.duration_secs),
+        tts_provider: ttsProvider,
+        tts_voice: ttsVoice,
+      });
+      episodes.push(ep);
+    }
+    const last = episodes[episodes.length - 1];
+    if (last) await markQueueItemPublished(c.env.DB, id, last.id);
+    return c.json({ episodes, status: "published" }, 201);
+  }
+
+  // Legacy single-audio path.
+  if (!item.audio_key) return c.json({ error: "no audio uploaded for this item" }, 409);
+  const title = body.title?.trim() || item.title?.trim() || `Episode ${id.slice(0, 8)}`;
+  const description = body.description?.trim() ?? fallbackDescription;
   const episode = await completeQueueItem(c.env.DB, item, {
     title,
     description,
-    duration_secs: duration,
-    tts_provider: pickStr(body.tts_provider) ?? null,
-    tts_voice: pickStr(body.tts_voice) ?? null,
+    duration_secs: cleanDuration(body.duration_secs),
+    tts_provider: ttsProvider,
+    tts_voice: ttsVoice,
   });
   return c.json({ episode, status: "published" }, 201);
 });

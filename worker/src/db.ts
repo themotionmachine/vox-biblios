@@ -48,10 +48,16 @@ export interface QueueItem {
   // Per-submission voice override; both null = inherit the feed default.
   tts_provider: string | null;
   tts_voice: string | null;
+  // Times this item has been claimed for synthesis. A stale `synthesizing` item
+  // is retired to `failed` once this reaches MAX_ATTEMPTS (see claimNextQueueItem).
+  attempts: number;
   claimed_at: string | null;
   created_at: string;
   updated_at: string;
 }
+
+/** Max times a queue item is claimed for synthesis before it is failed for good. */
+export const MAX_ATTEMPTS = 3;
 
 /** A claimed item plus the effective voice the poller should synthesize with. */
 export interface ClaimedItem extends QueueItem {
@@ -321,10 +327,26 @@ export async function insertQueueItem(
  * claim the same item twice.
  */
 export async function claimNextQueueItem(db: D1Database, staleMinutes = 30): Promise<ClaimedItem | null> {
+  // Retire any stale `synthesizing` item that has already used up its attempts,
+  // so a permanently-failing item is failed for good rather than re-claimed
+  // forever. Runs before the claim so such items are no longer claim-eligible.
+  await db
+    .prepare(
+      `UPDATE queue_items
+       SET status = 'failed',
+           error = 'exceeded max synthesis attempts (' || attempts || ')',
+           updated_at = datetime('now')
+       WHERE status = 'synthesizing' AND claimed_at < datetime('now', ?) AND attempts >= ?`,
+    )
+    .bind(`-${staleMinutes} minutes`, MAX_ATTEMPTS)
+    .run();
+  // Claim the next item — oldest queued, or a stale synthesizing item under the
+  // attempt cap (poller died mid-episode) — and count the attempt.
   const item = await db
     .prepare(
       `UPDATE queue_items
-       SET status = 'synthesizing', claimed_at = datetime('now'), updated_at = datetime('now')
+       SET status = 'synthesizing', claimed_at = datetime('now'), updated_at = datetime('now'),
+           attempts = attempts + 1
        WHERE id = (
          SELECT id FROM queue_items
          WHERE status = 'queued'
@@ -366,6 +388,64 @@ export async function setQueueItemAudio(
     .run();
 }
 
+/** Insert one episode row and return it. Shared by the single- and multi-part
+ *  complete paths; `guid` must be unique (per-part guids are `<itemId>-<k>`). */
+export async function insertEpisode(
+  db: D1Database,
+  ep: {
+    feed_id: number;
+    guid: string;
+    title: string;
+    description: string;
+    audio_key: string;
+    audio_bytes: number;
+    duration_secs: number | null;
+    tts_provider?: string | null;
+    tts_voice?: string | null;
+  },
+): Promise<Episode> {
+  const episode = await db
+    .prepare(
+      `INSERT INTO episodes (feed_id, guid, title, description, audio_key, audio_bytes, duration_secs, tts_provider, tts_voice)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    )
+    .bind(
+      ep.feed_id,
+      ep.guid,
+      ep.title,
+      ep.description,
+      ep.audio_key,
+      ep.audio_bytes,
+      ep.duration_secs,
+      ep.tts_provider ?? null,
+      ep.tts_voice ?? null,
+    )
+    .first<Episode>();
+  if (!episode) throw new Error("episode insert returned no row");
+  return episode;
+}
+
+/** Mark a queue item published, pointing at its (last) episode. */
+export async function markQueueItemPublished(db: D1Database, id: string, episodeId: number): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE queue_items
+       SET status = 'published', episode_id = ?, error = NULL, updated_at = datetime('now')
+       WHERE id = ?`,
+    )
+    .bind(episodeId, id)
+    .run();
+}
+
+/** Delete any episodes previously created for this item (single guid or part
+ *  guids `<itemId>-<k>`), so re-completing a partially-published item is clean. */
+export async function deleteEpisodesForItem(db: D1Database, itemId: string): Promise<void> {
+  await db
+    .prepare("DELETE FROM episodes WHERE guid = ? OR guid LIKE ?")
+    .bind(itemId, `${itemId}-%`)
+    .run();
+}
+
 export async function completeQueueItem(
   db: D1Database,
   item: QueueItem,
@@ -378,32 +458,18 @@ export async function completeQueueItem(
   },
 ): Promise<Episode> {
   if (!item.audio_key) throw new Error("queue item has no uploaded audio");
-  const episode = await db
-    .prepare(
-      `INSERT INTO episodes (feed_id, guid, title, description, audio_key, audio_bytes, duration_secs, tts_provider, tts_voice)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
-    )
-    .bind(
-      item.feed_id,
-      item.id,
-      meta.title,
-      meta.description,
-      item.audio_key,
-      item.audio_bytes ?? 0,
-      meta.duration_secs,
-      meta.tts_provider ?? null,
-      meta.tts_voice ?? null,
-    )
-    .first<Episode>();
-  if (!episode) throw new Error("episode insert returned no row");
-  await db
-    .prepare(
-      `UPDATE queue_items
-       SET status = 'published', episode_id = ?, error = NULL, updated_at = datetime('now')
-       WHERE id = ?`,
-    )
-    .bind(episode.id, item.id)
-    .run();
+  const episode = await insertEpisode(db, {
+    feed_id: item.feed_id,
+    guid: item.id,
+    title: meta.title,
+    description: meta.description,
+    audio_key: item.audio_key,
+    audio_bytes: item.audio_bytes ?? 0,
+    duration_secs: meta.duration_secs,
+    tts_provider: meta.tts_provider ?? null,
+    tts_voice: meta.tts_voice ?? null,
+  });
+  await markQueueItemPublished(db, item.id, episode.id);
   return episode;
 }
 

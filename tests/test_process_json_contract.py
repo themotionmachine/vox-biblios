@@ -56,11 +56,14 @@ def test_process_json_success_envelope(sample_input, tmp_path, fake_tts, capsys)
     assert "episodes" in payload
     assert len(payload["episodes"]) == 1
 
-    # Episode contract: the three fields the poller reads, plus a real file.
+    # Episode contract: the fields the poller reads, plus a real file.
     episode = payload["episodes"][0]
-    assert set(["title", "url", "description"]).issubset(episode.keys())
+    assert set(["title", "url", "description", "part", "parts"]).issubset(episode.keys())
     assert episode["title"] == "sample"
     assert episode["description"].startswith("Generated from")
+    # A short article is a single part.
+    assert episode["part"] == 1
+    assert episode["parts"] == 1
 
     from pathlib import Path
     mp3 = Path(episode["url"])
