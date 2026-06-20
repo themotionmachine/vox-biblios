@@ -98,3 +98,103 @@ def test_stats_returns_parsed_body(monkeypatch):
         c, "_request", _Recorder(status=200, body=json.dumps(payload).encode())
     )
     assert c.stats() == payload
+
+
+# --- list_feeds ---------------------------------------------------------------
+
+def test_list_feeds_request_shape_and_parse(monkeypatch):
+    c = ControlPlaneClient("https://cp.example.org", "t")
+    payload = {"feeds": [{"slug": "science", "title": "Science"}]}
+    rec = _Recorder(status=200, body=json.dumps(payload).encode())
+    monkeypatch.setattr(c, "_request", rec)
+    assert c.list_feeds() == payload
+    call = rec.calls[0]
+    assert call["method"] == "GET"
+    assert call["path"] == "/api/feeds"
+    assert call["json_body"] is None
+
+
+def test_list_feeds_non_200_raises(monkeypatch):
+    c = ControlPlaneClient("https://cp.example.org", "t")
+    monkeypatch.setattr(c, "_request", _Recorder(status=503, body=b""))
+    with pytest.raises(ControlPlaneError):
+        c.list_feeds()
+
+
+# --- create_feed --------------------------------------------------------------
+
+@pytest.fixture
+def feed_client(monkeypatch):
+    c = ControlPlaneClient("https://cp.example.org/", "secret-token")
+    rec = _Recorder(status=201, body=b'{"feed": {"slug": "science", "title": "Science"}}')
+    monkeypatch.setattr(c, "_request", rec)
+    return c, rec
+
+
+def test_create_feed_required_only_payload(feed_client):
+    c, rec = feed_client
+    body = c.create_feed("science", "Science")
+    assert body == {"feed": {"slug": "science", "title": "Science"}}
+    call = rec.calls[0]
+    assert call["method"] == "POST"
+    assert call["path"] == "/api/feeds"
+    assert call["json_body"] == {"slug": "science", "title": "Science"}
+
+
+def test_create_feed_omits_none_optionals(feed_client):
+    c, rec = feed_client
+    c.create_feed("science", "Science", description=None, link=None)
+    assert rec.calls[0]["json_body"] == {"slug": "science", "title": "Science"}
+
+
+def test_create_feed_includes_optionals(feed_client):
+    c, rec = feed_client
+    c.create_feed(
+        "science",
+        "Science",
+        description="All things science",
+        link="https://example.com",
+        author="Ryan",
+        image_url="https://example.com/cover.png",
+        language="en",
+        explicit=True,
+    )
+    assert rec.calls[0]["json_body"] == {
+        "slug": "science",
+        "title": "Science",
+        "description": "All things science",
+        "link": "https://example.com",
+        "author": "Ryan",
+        "image_url": "https://example.com/cover.png",
+        "language": "en",
+        "explicit": True,
+    }
+
+
+def test_create_feed_explicit_false_is_sent(feed_client):
+    # explicit=False is a real value, not absent — it must be sent.
+    c, rec = feed_client
+    c.create_feed("science", "Science", explicit=False)
+    assert rec.calls[0]["json_body"]["explicit"] is False
+
+
+def test_create_feed_non_201_raises(monkeypatch):
+    c = ControlPlaneClient("https://cp.example.org", "t")
+    monkeypatch.setattr(c, "_request", _Recorder(status=400, body=b'{"error": "title is required"}'))
+    with pytest.raises(ControlPlaneError) as exc:
+        c.create_feed("science", "")
+    assert "400" in str(exc.value)
+    assert "title is required" in str(exc.value)
+
+
+def test_create_feed_409_surfaces_message(monkeypatch):
+    c = ControlPlaneClient("https://cp.example.org", "t")
+    monkeypatch.setattr(
+        c, "_request",
+        _Recorder(status=409, body=b'{"error": "feed \'science\' already exists"}'),
+    )
+    with pytest.raises(ControlPlaneError) as exc:
+        c.create_feed("science", "Science")
+    msg = str(exc.value)
+    assert "409" in msg
+    assert "already exists" in msg
