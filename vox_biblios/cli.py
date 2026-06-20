@@ -176,6 +176,10 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     feed_create_parser.add_argument('--language', type=str, default=None, help='Feed language (default: en)')
     feed_create_parser.add_argument('--explicit', action='store_true', default=None,
                                     help='Mark the feed as explicit')
+    feed_create_parser.add_argument('--tts-provider', type=str, default=None,
+                                    help='Default TTS provider for this feed (requires --tts-voice)')
+    feed_create_parser.add_argument('--tts-voice', type=str, default=None,
+                                    help='Default TTS voice for this feed (requires --tts-provider)')
     feed_create_parser.add_argument('--json', action='store_true', help='Emit machine-readable JSON on stdout')
 
     feed_list_parser = feed_subparsers.add_parser('list', help='List control-plane feeds')
@@ -484,6 +488,14 @@ def feed_command(args: argparse.Namespace) -> int:
         return 0
 
     if args.feed_command == 'create':
+        # Voice is provider-specific, so the two flags must come as a pair.
+        if (args.tts_provider is None) != (args.tts_voice is None):
+            msg = "--tts-provider and --tts-voice must be given together"
+            if json_mode:
+                print(json.dumps({'status': 'error', 'error': msg}))
+            else:
+                print(Fore.RED + f"Error: {msg}" + Style.RESET_ALL)
+            return 1
         try:
             body = client.create_feed(
                 args.slug,
@@ -494,6 +506,8 @@ def feed_command(args: argparse.Namespace) -> int:
                 image_url=args.image_url,
                 language=args.language,
                 explicit=args.explicit,
+                tts_provider=args.tts_provider,
+                tts_voice=args.tts_voice,
             )
         except ControlPlaneError as e:
             if json_mode:

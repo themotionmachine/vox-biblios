@@ -178,6 +178,22 @@ def test_create_feed_explicit_false_is_sent(feed_client):
     assert rec.calls[0]["json_body"]["explicit"] is False
 
 
+def test_create_feed_includes_voice_pair(feed_client):
+    c, rec = feed_client
+    c.create_feed("science", "Science", tts_provider="kokoro", tts_voice="af_heart")
+    body = rec.calls[0]["json_body"]
+    assert body["tts_provider"] == "kokoro"
+    assert body["tts_voice"] == "af_heart"
+
+
+def test_create_feed_omits_voice_when_none(feed_client):
+    c, rec = feed_client
+    c.create_feed("science", "Science")
+    body = rec.calls[0]["json_body"]
+    assert "tts_provider" not in body
+    assert "tts_voice" not in body
+
+
 def test_create_feed_non_201_raises(monkeypatch):
     c = ControlPlaneClient("https://cp.example.org", "t")
     monkeypatch.setattr(c, "_request", _Recorder(status=400, body=b'{"error": "title is required"}'))

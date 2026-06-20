@@ -129,6 +129,31 @@ def test_feed_create_optionals_default_none(monkeypatch, with_token, capsys):
     assert kwargs["image_url"] is None
     assert kwargs["language"] is None
     assert kwargs["explicit"] is None
+    assert kwargs["tts_provider"] is None
+    assert kwargs["tts_voice"] is None
+
+
+def test_feed_create_passes_voice_pair(monkeypatch, with_token, capsys):
+    fake = _install_client(monkeypatch, _FakeClient())
+    code = _run([
+        "feed", "create", "science", "--title", "Science",
+        "--tts-provider", "kokoro", "--tts-voice", "af_heart", "--json",
+    ])
+    assert code == 0
+    _, kwargs = fake.calls[0]
+    assert kwargs["tts_provider"] == "kokoro"
+    assert kwargs["tts_voice"] == "af_heart"
+
+
+def test_feed_create_half_voice_pair_errors(monkeypatch, with_token, capsys):
+    # Only one of the voice pair given → CLI rejects before any client call.
+    fake = _install_client(monkeypatch, _FakeClient())
+    code = _run(["feed", "create", "science", "--title", "Science", "--tts-voice", "af_heart", "--json"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert json.loads(out)["status"] == "error"
+    assert "together" in json.loads(out)["error"]
+    assert fake.calls == []
 
 
 def test_feed_create_409_error_json(monkeypatch, with_token, capsys):

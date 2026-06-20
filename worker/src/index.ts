@@ -26,6 +26,7 @@ import {
   type Feed,
   type QueueStatus,
 } from "./db";
+import { decodeVoiceValue, parseVoiceSelection } from "./voices";
 import { renderRss } from "./rss";
 import { renderHome } from "./ui";
 
@@ -107,6 +108,11 @@ interface SubmitBody {
   text?: string;
   title?: string;
   feed?: string;
+  // Per-submission voice override (raw); validated in the handler. Both absent
+  // means "inherit the feed default". The form posts a single "voice" field
+  // ("provider:voice"); the JSON API takes explicit tts_provider/tts_voice.
+  tts_provider?: string;
+  tts_voice?: string;
 }
 
 const pickStr = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined);
@@ -115,14 +121,29 @@ async function parseSubmission(c: Context<AppEnv>): Promise<{ body: SubmitBody; 
   const contentType = c.req.header("content-type") ?? "";
   if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {
     const form = await c.req.parseBody();
+    const v = decodeVoiceValue(form["voice"]);
     return {
-      body: { url: pickStr(form["url"]), text: pickStr(form["text"]), title: pickStr(form["title"]), feed: pickStr(form["feed"]) },
+      body: {
+        url: pickStr(form["url"]),
+        text: pickStr(form["text"]),
+        title: pickStr(form["title"]),
+        feed: pickStr(form["feed"]),
+        tts_provider: v.provider ?? undefined,
+        tts_voice: v.voice ?? undefined,
+      },
       isForm: true,
     };
   }
   const json = await c.req.json<SubmitBody>().catch(() => ({}) as SubmitBody);
   return {
-    body: { url: pickStr(json.url), text: pickStr(json.text), title: pickStr(json.title), feed: pickStr(json.feed) },
+    body: {
+      url: pickStr(json.url),
+      text: pickStr(json.text),
+      title: pickStr(json.title),
+      feed: pickStr(json.feed),
+      tts_provider: pickStr(json.tts_provider),
+      tts_voice: pickStr(json.tts_voice),
+    },
     isForm: false,
   };
 }
@@ -151,6 +172,9 @@ app.post("/api/queue", async (c) => {
     return c.json({ error: `title exceeds ${MAX_TITLE_CHARS} characters` }, 400);
   }
 
+  const voice = parseVoiceSelection(body.tts_provider, body.tts_voice);
+  if (!voice.ok) return c.json({ error: voice.error }, 400);
+
   const feed = await resolveFeed(c.env.DB, body.feed);
   if (!feed) {
     return body.feed
@@ -165,6 +189,8 @@ app.post("/api/queue", async (c) => {
     kind: body.url ? "url" : "text",
     payload: body.url ?? body.text ?? "",
     title: body.title ?? null,
+    tts_provider: voice.value.provider,
+    tts_voice: voice.value.voice,
   });
 
   if (isForm) return c.redirect(`/?feed=${encodeURIComponent(feed.slug)}`, 303);
@@ -233,12 +259,18 @@ interface FeedBody {
   image_url?: string;
   language?: string;
   explicit?: boolean;
+  // Default voice (raw). undefined = leave unchanged on edit; null = clear to
+  // the host default; string = set. provider and voice are validated together.
+  tts_provider?: string | null;
+  tts_voice?: string | null;
 }
 
 async function parseFeedBody(c: Context<AppEnv>): Promise<{ body: FeedBody; isForm: boolean }> {
   const contentType = c.req.header("content-type") ?? "";
   if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {
     const form = await c.req.parseBody();
+    // The form always carries the voice <select>, so "" means "clear to default".
+    const v = decodeVoiceValue(form["voice"]);
     return {
       body: {
         slug: pickStr(form["slug"]),
@@ -249,11 +281,17 @@ async function parseFeedBody(c: Context<AppEnv>): Promise<{ body: FeedBody; isFo
         image_url: pickStr(form["image_url"]),
         language: pickStr(form["language"]),
         explicit: form["explicit"] !== undefined && form["explicit"] !== "",
+        tts_provider: v.provider,
+        tts_voice: v.voice,
       },
       isForm: true,
     };
   }
   const j = await c.req.json<FeedBody>().catch(() => ({}) as FeedBody);
+  // For JSON, an omitted key stays undefined (unchanged); a present key (incl.
+  // empty/null) becomes null to clear, or its trimmed value to set.
+  const jsonVoice = (key: "tts_provider" | "tts_voice"): string | null | undefined =>
+    key in j ? pickStr(j[key]) ?? null : undefined;
   return {
     body: {
       slug: pickStr(j.slug),
@@ -264,9 +302,28 @@ async function parseFeedBody(c: Context<AppEnv>): Promise<{ body: FeedBody; isFo
       image_url: pickStr(j.image_url),
       language: pickStr(j.language),
       explicit: typeof j.explicit === "boolean" ? j.explicit : undefined,
+      tts_provider: jsonVoice("tts_provider"),
+      tts_voice: jsonVoice("tts_voice"),
     },
     isForm: false,
   };
+}
+
+/**
+ * Validate a feed body's voice fields into a tri-state for create/update:
+ *   - { provider, voice }  both set, both null (cleared), or both undefined
+ *   - throws via the returned error when half-set or an unknown pair.
+ * undefined survives only when BOTH are undefined (JSON edit left them alone).
+ */
+function resolveFeedVoice(
+  body: FeedBody,
+): { ok: true; provider: string | null | undefined; voice: string | null | undefined } | { ok: false; error: string } {
+  if (body.tts_provider === undefined && body.tts_voice === undefined) {
+    return { ok: true, provider: undefined, voice: undefined };
+  }
+  const sel = parseVoiceSelection(body.tts_provider ?? undefined, body.tts_voice ?? undefined);
+  if (!sel.ok) return sel;
+  return { ok: true, provider: sel.value.provider, voice: sel.value.voice };
 }
 
 app.get("/api/feeds", async (c) => {
@@ -281,6 +338,8 @@ app.post("/api/feeds", async (c) => {
     return c.json({ error: "slug is required and must match ^[a-z0-9-]+$" }, 400);
   }
   if (!title) return c.json({ error: "title is required" }, 400);
+  const voice = resolveFeedVoice(body);
+  if (!voice.ok) return c.json({ error: voice.error }, 400);
   if (await getFeedBySlug(c.env.DB, slug)) {
     return c.json({ error: `feed '${slug}' already exists` }, 409);
   }
@@ -293,6 +352,8 @@ app.post("/api/feeds", async (c) => {
     image_url: body.image_url,
     language: body.language,
     explicit: body.explicit,
+    tts_provider: voice.provider ?? null,
+    tts_voice: voice.voice ?? null,
   });
   if (isForm) return c.redirect(`/?feed=${encodeURIComponent(slug)}`, 303);
   return c.json({ feed }, 201);
@@ -303,6 +364,8 @@ async function editFeed(c: Context<AppEnv>) {
   if (!slug) return c.json({ error: "invalid feed slug" }, 400);
   if (!(await getFeedBySlug(c.env.DB, slug))) return c.json({ error: "feed not found" }, 404);
   const { body, isForm } = await parseFeedBody(c);
+  const voice = resolveFeedVoice(body);
+  if (!voice.ok) return c.json({ error: voice.error }, 400);
   const feed = await updateFeed(c.env.DB, slug, {
     title: body.title,
     description: body.description,
@@ -311,6 +374,8 @@ async function editFeed(c: Context<AppEnv>) {
     image_url: body.image_url,
     language: body.language,
     explicit: body.explicit,
+    tts_provider: voice.provider,
+    tts_voice: voice.voice,
   });
   if (isForm) return c.redirect(`/?feed=${encodeURIComponent(slug)}`, 303);
   return c.json({ feed });
@@ -475,6 +540,9 @@ interface CompleteBody {
   title?: string;
   description?: string;
   duration_secs?: number;
+  // The voice the poller actually synthesized with, recorded on the episode.
+  tts_provider?: string;
+  tts_voice?: string;
 }
 
 app.post("/api/worker/items/:id/complete", async (c) => {
@@ -491,7 +559,13 @@ app.post("/api/worker/items/:id/complete", async (c) => {
   const description = body.description?.trim() ?? (item.kind === "url" ? item.payload : "");
   const duration = typeof body.duration_secs === "number" && body.duration_secs > 0 ? Math.round(body.duration_secs) : null;
 
-  const episode = await completeQueueItem(c.env.DB, item, { title, description, duration_secs: duration });
+  const episode = await completeQueueItem(c.env.DB, item, {
+    title,
+    description,
+    duration_secs: duration,
+    tts_provider: pickStr(body.tts_provider) ?? null,
+    tts_voice: pickStr(body.tts_voice) ?? null,
+  });
   return c.json({ episode, status: "published" }, 201);
 });
 

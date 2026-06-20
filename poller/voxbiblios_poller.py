@@ -192,12 +192,25 @@ class Client:
             raise TransportError(f"upload returned {status}: {body[:200]!r}")
         return json.loads(body).get("audio_bytes", len(data))
 
-    def complete(self, item_id: str, title: Optional[str], description: str, duration: Optional[int]) -> None:
+    def complete(
+        self,
+        item_id: str,
+        title: Optional[str],
+        description: str,
+        duration: Optional[int],
+        tts_provider: Optional[str] = None,
+        tts_voice: Optional[str] = None,
+    ) -> None:
         payload: dict[str, Any] = {"description": description}
         if title:
             payload["title"] = title
         if duration:
             payload["duration_secs"] = duration
+        # Record what we actually synthesized with, for the episode's audit trail.
+        if tts_provider:
+            payload["tts_provider"] = tts_provider
+        if tts_voice:
+            payload["tts_voice"] = tts_voice
         status, body = self._request("POST", f"/api/worker/items/{item_id}/complete", json_body=payload)
         if status != 201:
             raise TransportError(f"complete returned {status}: {body[:200]!r}")
@@ -239,7 +252,18 @@ def synthesize(cfg: Config, item: dict[str, Any], tmp_dir: Path) -> tuple[Path, 
 
     cmd += ["--output-dir", str(tmp_dir), "--json"]
 
-    log(f"synthesizing {item['id'][:8]} ({kind}) via: {' '.join(cmd[:2])} … --output-dir {tmp_dir}")
+    # The control plane resolves queue-override → feed-default → host-default and
+    # hands back the effective voice on claim. Pass it through; when absent the
+    # CLI falls back to its own configured default.
+    provider = item.get("effective_tts_provider")
+    voice = item.get("effective_tts_voice")
+    if provider:
+        cmd += ["--provider", provider]
+    if voice:
+        cmd += ["--voice", voice]
+
+    log(f"synthesizing {item['id'][:8]} ({kind}) via: {' '.join(cmd[:2])} … --output-dir {tmp_dir}"
+        + (f" (voice {provider or '?'}:{voice})" if voice else ""))
     try:
         proc = subprocess.run(
             cmd,
@@ -317,7 +341,11 @@ def process_one(cfg: Config, client: Client, item: dict[str, Any]) -> None:
         mp3, title, description = synthesize(cfg, item, tmp_dir)
         audio_bytes = client.upload_audio(item_id, mp3)
         duration = probe_duration(mp3)
-        client.complete(item_id, title, description, duration)
+        client.complete(
+            item_id, title, description, duration,
+            tts_provider=item.get("effective_tts_provider"),
+            tts_voice=item.get("effective_tts_voice"),
+        )
         log(f"published {item_id[:8]} ({audio_bytes} bytes, {duration or '?'}s): {title or '(untitled)'}")
     except SynthFailure as e:
         log(f"FAILED {item_id[:8]}: {e}")

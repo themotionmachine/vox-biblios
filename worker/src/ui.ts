@@ -1,8 +1,32 @@
 import { html, raw } from "hono/html";
 import { DEFAULT_FEED_SLUG, type Episode, type Feed, type QueueItem, type Stats } from "./db";
+import { VOICE_CATALOG, encodeVoiceValue } from "./voices";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// A single <select name="voice"> whose value encodes "provider:voice" (or "" for
+// the default). One control instead of two dependent dropdowns keeps the form
+// JS-free; the server splits the value back apart.
+function voiceSelect(provider: string | null, voice: string | null, defaultLabel: string): string {
+  const selected = encodeVoiceValue(provider, voice);
+  const groups = VOICE_CATALOG.map((g) => {
+    const options = g.voices
+      .map((v) => {
+        const val = `${g.provider}:${v}`;
+        return `<option value="${esc(val)}"${val === selected ? " selected" : ""}>${esc(v)}</option>`;
+      })
+      .join("");
+    return `<optgroup label="${esc(g.label)}">${options}</optgroup>`;
+  }).join("");
+  const def = `<option value=""${selected === "" ? " selected" : ""}>${esc(defaultLabel)}</option>`;
+  return `<select name="voice">${def}${groups}</select>`;
+}
+
+// Compact readout of a (provider, voice) pair, or "default" when unset.
+function voiceLabel(provider: string | null, voice: string | null): string {
+  return provider && voice ? `${esc(provider)} · ${esc(voice)}` : `<span class="nil">default</span>`;
 }
 
 function truncate(s: string, n: number): string {
@@ -77,6 +101,7 @@ function episodeRow(ep: Episode, audioBase: string): string {
     <td>${esc(ep.title)}</td>
     <td><a class="link" href="${esc(`${audioBase}/${ep.audio_key}`)}">mp3</a></td>
     <td class="num">${size}</td>
+    <td>${voiceLabel(ep.tts_provider, ep.tts_voice)}</td>
     <td><time>${esc(ep.published_at)}</time></td>
     <td class="actions">${actions}</td>
   </tr>`;
@@ -115,6 +140,7 @@ function feedManageRow(f: Feed): string {
     <form method="post" action="/api/feeds/${slug}">
       <label class="field"><span>Title</span><input name="title" type="text" value="${esc(f.title)}" /></label>
       <label class="field"><span>Description</span><textarea name="description" rows="2">${esc(f.description)}</textarea></label>
+      <label class="field"><span>Default voice</span>${voiceSelect(f.tts_provider, f.tts_voice, "Default (host setting)")}</label>
       <label class="field"><span>Author</span><input name="author" type="text" value="${esc(f.author)}" /></label>
       <label class="field"><span>Image URL</span><input name="image_url" type="url" value="${esc(f.image_url)}" /></label>
       <label class="field"><span>Website link</span><input name="link" type="url" value="${esc(f.link)}" /></label>
@@ -125,6 +151,7 @@ function feedManageRow(f: Feed): string {
   return `<tr>
     <td><code class="id">${slug}</code></td>
     <td>${esc(f.title)}</td>
+    <td>${voiceLabel(f.tts_provider, f.tts_voice)}</td>
     <td><a class="link" href="/feed/${slug}.xml">rss</a></td>
     <td class="actions">${edit}${del}</td>
   </tr>`;
@@ -138,6 +165,7 @@ function feedsPanel(feeds: Feed[]): string {
       <label class="field"><span>Slug</span><input name="slug" type="text" placeholder="a-z 0-9 -" required pattern="[a-z0-9-]+" /></label>
       <label class="field"><span>Title</span><input name="title" type="text" required /></label>
       <label class="field"><span>Description</span><textarea name="description" rows="2"></textarea></label>
+      <label class="field"><span>Default voice</span>${voiceSelect(null, null, "Default (host setting)")}</label>
       <label class="field"><span>Author</span><input name="author" type="text" /></label>
       <label class="field"><span>Image URL</span><input name="image_url" type="url" /></label>
       <label class="field"><span>Website link</span><input name="link" type="url" /></label>
@@ -145,7 +173,7 @@ function feedsPanel(feeds: Feed[]): string {
       <button type="submit" class="btn btn-primary btn-sm">Create feed</button>
     </form>
   </details>`;
-  return `<div class="table-wrap"><table><thead><tr><th>slug</th><th>title</th><th>rss</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${addForm}`;
+  return `<div class="table-wrap"><table><thead><tr><th>slug</th><th>title</th><th>voice</th><th>rss</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${addForm}`;
 }
 
 // One-line instrument readout (no cards). Status indicators stay dark until a
@@ -359,7 +387,7 @@ export function renderHome(
   const episodesBody =
     episodes.length === 0
       ? `<p class="empty">No episodes yet.</p>`
-      : `<div class="table-wrap"><table><thead><tr><th>title</th><th>audio</th><th>size</th><th>published (UTC)</th><th></th></tr></thead><tbody>${episodes
+      : `<div class="table-wrap"><table><thead><tr><th>title</th><th>audio</th><th>size</th><th>voice</th><th>published (UTC)</th><th></th></tr></thead><tbody>${episodes
           .map((ep) => episodeRow(ep, audioBase))
           .join("")}</tbody></table></div>`;
 
@@ -391,6 +419,7 @@ ${raw(feedSwitcher(feeds, feed))}
   <h2>Submit <span class="zone-meta">${feed.description} · <a class="link" href="/feed/${esc(feed.slug)}.xml">feed.xml</a></span></h2>
   <form class="submit" method="post" action="/api/queue">
     <label class="field"><span>Feed</span>${raw(feedSelect(feeds, feed))}</label>
+    <label class="field"><span>Voice</span>${raw(voiceSelect(null, null, "Use feed default"))}</label>
     <label class="field"><span>Article URL</span><input name="url" type="url" placeholder="https://example.com/article" /></label>
     <p class="or">or</p>
     <label class="field"><span>Raw text</span><textarea name="text" rows="4" placeholder="Paste an article body to read aloud"></textarea></label>

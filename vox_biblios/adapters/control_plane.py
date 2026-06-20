@@ -103,12 +103,16 @@ class ControlPlaneClient:
                     author: Optional[str] = None,
                     image_url: Optional[str] = None,
                     language: Optional[str] = None,
-                    explicit: Optional[bool] = None) -> Dict[str, Any]:
+                    explicit: Optional[bool] = None,
+                    tts_provider: Optional[str] = None,
+                    tts_voice: Optional[str] = None) -> Dict[str, Any]:
         """Create a feed. Returns the parsed {feed} body.
 
         Required: slug (worker enforces ^[a-z0-9-]+$) and title. Optional fields
         are omitted from the payload when None (the worker applies its own
-        defaults, e.g. language=en). A 409 (slug already exists) surfaces as a
+        defaults, e.g. language=en). ``tts_provider``/``tts_voice`` set the feed's
+        default synthesis voice and must travel together (the worker rejects a
+        half-set pair). A 409 (slug already exists) surfaces as a
         ControlPlaneError carrying the worker's message.
         """
         payload: Dict[str, Any] = {"slug": slug, "title": title}
@@ -119,6 +123,8 @@ class ControlPlaneClient:
             "image_url": image_url,
             "language": language,
             "explicit": explicit,
+            "tts_provider": tts_provider,
+            "tts_voice": tts_voice,
         }
         for key, value in optional.items():
             if value is not None:

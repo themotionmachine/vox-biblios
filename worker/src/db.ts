@@ -8,6 +8,10 @@ export interface Feed {
   image_url: string;
   language: string;
   explicit: number;
+  // Default synthesis voice for this feed; both null = use the host's global
+  // default. Provider and voice always travel together (see migration 0003).
+  tts_provider: string | null;
+  tts_voice: string | null;
   created_at: string;
 }
 
@@ -20,6 +24,10 @@ export interface Episode {
   audio_key: string;
   audio_bytes: number;
   duration_secs: number | null;
+  // What was actually used to synthesize this episode (audit/display); null for
+  // episodes published before voice tracking, or when the host default was used.
+  tts_provider: string | null;
+  tts_voice: string | null;
   published_at: string;
   created_at: string;
 }
@@ -37,9 +45,19 @@ export interface QueueItem {
   episode_id: number | null;
   audio_key: string | null;
   audio_bytes: number | null;
+  // Per-submission voice override; both null = inherit the feed default.
+  tts_provider: string | null;
+  tts_voice: string | null;
   claimed_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** A claimed item plus the effective voice the poller should synthesize with. */
+export interface ClaimedItem extends QueueItem {
+  /** queue override → feed default → null (host's global default). */
+  effective_tts_provider: string | null;
+  effective_tts_voice: string | null;
 }
 
 /** Slug of the feed that backs /feed.xml and feed-less submissions. */
@@ -75,13 +93,17 @@ export interface FeedInput {
   image_url?: string;
   language?: string;
   explicit?: boolean;
+  // Tri-state for updates: undefined = leave unchanged, null = clear to default,
+  // string = set. On create, null/undefined both store NULL.
+  tts_provider?: string | null;
+  tts_voice?: string | null;
 }
 
 export async function createFeed(db: D1Database, f: FeedInput): Promise<Feed | null> {
   return db
     .prepare(
-      `INSERT INTO feeds (slug, title, description, link, author, image_url, language, explicit)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      `INSERT INTO feeds (slug, title, description, link, author, image_url, language, explicit, tts_provider, tts_voice)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
     .bind(
       f.slug,
@@ -92,6 +114,8 @@ export async function createFeed(db: D1Database, f: FeedInput): Promise<Feed | n
       f.image_url ?? "",
       f.language ?? "en",
       f.explicit ? 1 : 0,
+      f.tts_provider ?? null,
+      f.tts_voice ?? null,
     )
     .first<Feed>();
 }
@@ -101,7 +125,7 @@ export async function updateFeed(
   slug: string,
   fields: Partial<Omit<FeedInput, "slug">>,
 ): Promise<Feed | null> {
-  const map: Record<string, string | number | undefined> = {
+  const map: Record<string, string | number | null | undefined> = {
     title: fields.title,
     description: fields.description,
     link: fields.link,
@@ -109,9 +133,12 @@ export async function updateFeed(
     image_url: fields.image_url,
     language: fields.language,
     explicit: fields.explicit === undefined ? undefined : fields.explicit ? 1 : 0,
+    // null is meaningful here (clear to default), so it must reach the UPDATE.
+    tts_provider: fields.tts_provider,
+    tts_voice: fields.tts_voice,
   };
   const cols: string[] = [];
-  const binds: (string | number)[] = [];
+  const binds: (string | number | null)[] = [];
   for (const [k, v] of Object.entries(map)) {
     if (v !== undefined) {
       cols.push(`${k} = ?`);
@@ -269,11 +296,21 @@ export async function getQueueItem(db: D1Database, id: string): Promise<QueueIte
 
 export async function insertQueueItem(
   db: D1Database,
-  item: { id: string; feed_id: number; kind: "url" | "text"; payload: string; title: string | null },
+  item: {
+    id: string;
+    feed_id: number;
+    kind: "url" | "text";
+    payload: string;
+    title: string | null;
+    tts_provider?: string | null;
+    tts_voice?: string | null;
+  },
 ): Promise<void> {
   await db
-    .prepare("INSERT INTO queue_items (id, feed_id, kind, payload, title) VALUES (?, ?, ?, ?, ?)")
-    .bind(item.id, item.feed_id, item.kind, item.payload, item.title)
+    .prepare(
+      "INSERT INTO queue_items (id, feed_id, kind, payload, title, tts_provider, tts_voice) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(item.id, item.feed_id, item.kind, item.payload, item.title, item.tts_provider ?? null, item.tts_voice ?? null)
     .run();
 }
 
@@ -283,8 +320,8 @@ export async function insertQueueItem(
  * Single UPDATE...RETURNING statement, so concurrent pollers cannot
  * claim the same item twice.
  */
-export async function claimNextQueueItem(db: D1Database, staleMinutes = 30): Promise<QueueItem | null> {
-  return db
+export async function claimNextQueueItem(db: D1Database, staleMinutes = 30): Promise<ClaimedItem | null> {
+  const item = await db
     .prepare(
       `UPDATE queue_items
        SET status = 'synthesizing', claimed_at = datetime('now'), updated_at = datetime('now')
@@ -299,6 +336,20 @@ export async function claimNextQueueItem(db: D1Database, staleMinutes = 30): Pro
     )
     .bind(`-${staleMinutes} minutes`)
     .first<QueueItem>();
+  if (!item) return null;
+  // Resolve the effective voice for the poller: queue override → feed default →
+  // null (the host's global default). A bare provider/voice on the queue item
+  // never half-overrides, since they're stored together.
+  const feed = await db
+    .prepare("SELECT tts_provider, tts_voice FROM feeds WHERE id = ?")
+    .bind(item.feed_id)
+    .first<{ tts_provider: string | null; tts_voice: string | null }>();
+  const override = item.tts_provider && item.tts_voice;
+  return {
+    ...item,
+    effective_tts_provider: override ? item.tts_provider : feed?.tts_provider ?? null,
+    effective_tts_voice: override ? item.tts_voice : feed?.tts_voice ?? null,
+  };
 }
 
 export async function setQueueItemAudio(
@@ -318,13 +369,19 @@ export async function setQueueItemAudio(
 export async function completeQueueItem(
   db: D1Database,
   item: QueueItem,
-  meta: { title: string; description: string; duration_secs: number | null },
+  meta: {
+    title: string;
+    description: string;
+    duration_secs: number | null;
+    tts_provider?: string | null;
+    tts_voice?: string | null;
+  },
 ): Promise<Episode> {
   if (!item.audio_key) throw new Error("queue item has no uploaded audio");
   const episode = await db
     .prepare(
-      `INSERT INTO episodes (feed_id, guid, title, description, audio_key, audio_bytes, duration_secs)
-       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      `INSERT INTO episodes (feed_id, guid, title, description, audio_key, audio_bytes, duration_secs, tts_provider, tts_voice)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
     .bind(
       item.feed_id,
@@ -334,6 +391,8 @@ export async function completeQueueItem(
       item.audio_key,
       item.audio_bytes ?? 0,
       meta.duration_secs,
+      meta.tts_provider ?? null,
+      meta.tts_voice ?? null,
     )
     .first<Episode>();
   if (!episode) throw new Error("episode insert returned no row");
