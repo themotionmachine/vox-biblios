@@ -162,6 +162,25 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     config_subparsers.add_parser('show', help='Show configuration sources')
     config_subparsers.add_parser('edit', help='Edit configuration file')
 
+    # Feed command (control-plane feed management)
+    feed_parser = subparsers.add_parser('feed', help='Manage control-plane feeds')
+    feed_subparsers = feed_parser.add_subparsers(dest='feed_command', help='Feed command')
+
+    feed_create_parser = feed_subparsers.add_parser('create', help='Create a control-plane feed')
+    feed_create_parser.add_argument('slug', type=str, help='Feed slug (must match ^[a-z0-9-]+$)')
+    feed_create_parser.add_argument('--title', type=str, required=True, help='Feed title (required)')
+    feed_create_parser.add_argument('--description', type=str, default=None, help='Feed description')
+    feed_create_parser.add_argument('--link', type=str, default=None, help='Feed homepage link')
+    feed_create_parser.add_argument('--author', type=str, default=None, help='Feed author')
+    feed_create_parser.add_argument('--image-url', type=str, default=None, help='Feed cover image URL')
+    feed_create_parser.add_argument('--language', type=str, default=None, help='Feed language (default: en)')
+    feed_create_parser.add_argument('--explicit', action='store_true', default=None,
+                                    help='Mark the feed as explicit')
+    feed_create_parser.add_argument('--json', action='store_true', help='Emit machine-readable JSON on stdout')
+
+    feed_list_parser = feed_subparsers.add_parser('list', help='List control-plane feeds')
+    feed_list_parser.add_argument('--json', action='store_true', help='Emit machine-readable JSON on stdout')
+
     # Voices command
     voices_parser = subparsers.add_parser('voices', help='List available TTS voices')
     voices_parser.add_argument(
@@ -402,6 +421,97 @@ def _submit_to_control_plane(input_source: str, is_url: bool,
             print(Fore.RED + "Submission failed." + Style.RESET_ALL)
 
     return exit_code
+
+
+def _control_plane_client_or_error(json_mode: bool):
+    """Build a ControlPlaneClient, or print the token-missing guidance and None.
+
+    Mirrors the guard in _submit_to_control_plane: the control plane is the
+    default surface, so a missing token is an error (not a silent fallback).
+    """
+    from vox_biblios.adapters.control_plane import ControlPlaneClient
+
+    cp = config.control_plane
+    if not cp.token:
+        if json_mode:
+            print(json.dumps({'status': 'error', 'error': 'CONTROL_PLANE_TOKEN not set'}))
+        else:
+            print(Fore.RED + "Error: Cloudflare control plane is the default publish "
+                  "target, but CONTROL_PLANE_TOKEN is not set." + Style.RESET_ALL)
+            print("  • Configure it:  vox-biblios config init  "
+                  "(sets CONTROL_PLANE_URL + CONTROL_PLANE_TOKEN)")
+            print("  • Or publish another way:  --target s3  (legacy direct)  "
+                  "or  --target local --output-dir DIR")
+        return None
+    return ControlPlaneClient(cp.url, cp.token)
+
+
+def feed_command(args: argparse.Namespace) -> int:
+    """Execute the feed subcommands (create / list) against the control plane."""
+    from vox_biblios.adapters.control_plane import ControlPlaneError
+
+    if not getattr(args, 'feed_command', None):
+        print(Fore.RED + "Error: Please specify a feed subcommand (create or list)" + Style.RESET_ALL)
+        return 1
+
+    json_mode = getattr(args, 'json', False)
+    client = _control_plane_client_or_error(json_mode)
+    if client is None:
+        return 1
+
+    if args.feed_command == 'list':
+        try:
+            body = client.list_feeds()
+        except ControlPlaneError as e:
+            if json_mode:
+                print(json.dumps({'status': 'error', 'error': str(e)}))
+            else:
+                print(Fore.RED + f"Error: {e}" + Style.RESET_ALL)
+            return 1
+
+        feeds = body.get('feeds', [])
+        if json_mode:
+            print(json.dumps(feeds, indent=2))
+        else:
+            if not feeds:
+                print("No feeds found.")
+            else:
+                for feed in feeds:
+                    slug = feed.get('slug', '?')
+                    title = feed.get('title', '')
+                    print(Fore.GREEN + f"  {slug}" + Style.RESET_ALL + f"  {title}")
+                print(f"\n{len(feeds)} feed(s).")
+        return 0
+
+    if args.feed_command == 'create':
+        try:
+            body = client.create_feed(
+                args.slug,
+                args.title,
+                description=args.description,
+                link=args.link,
+                author=args.author,
+                image_url=args.image_url,
+                language=args.language,
+                explicit=args.explicit,
+            )
+        except ControlPlaneError as e:
+            if json_mode:
+                print(json.dumps({'status': 'error', 'error': str(e)}))
+            else:
+                print(Fore.RED + f"Error: {e}" + Style.RESET_ALL)
+            return 1
+
+        feed = body.get('feed', body)
+        if json_mode:
+            print(json.dumps(feed, indent=2))
+        else:
+            print(Fore.GREEN + f"Created feed '{feed.get('slug', args.slug)}'" + Style.RESET_ALL
+                  + f" ({feed.get('title', args.title)})")
+        return 0
+
+    print(Fore.RED + f"Error: Unknown feed subcommand: {args.feed_command}" + Style.RESET_ALL)
+    return 1
 
 
 def process_command(args: argparse.Namespace) -> int:
@@ -868,6 +978,8 @@ def main() -> int:
         return version_command(args)
     elif args.command == 'config':
         return config_command(args)
+    elif args.command == 'feed':
+        return feed_command(args)
     elif args.command == 'voices':
         return voices_command(args)
     else:

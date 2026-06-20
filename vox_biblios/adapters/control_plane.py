@@ -10,6 +10,8 @@ poller), so there is no extra dependency.
 Queue API (see worker/README.md):
     POST /api/queue   {url} | {text, title?}  (+ optional feed slug)  -> 201 {id, status}
     GET  /api/stats   -> queue/episode counts, staleness, oldest queued
+    GET  /api/feeds   -> {feeds: [{slug, title, ...}, ...]}
+    POST /api/feeds   {slug, title, ...}  -> 201 {feed}  (409 if slug exists)
 """
 import json
 import urllib.error
@@ -85,6 +87,44 @@ class ControlPlaneClient:
         """At-a-glance queue health (used to warn about an unattended poller)."""
         status, body = self._request("GET", "/api/stats")
         if status != 200:
+            raise ControlPlaneError(_describe(status, body))
+        return json.loads(body)
+
+    def list_feeds(self) -> Dict[str, Any]:
+        """List the control plane's feeds. Returns the parsed {feeds} body."""
+        status, body = self._request("GET", "/api/feeds")
+        if status != 200:
+            raise ControlPlaneError(_describe(status, body))
+        return json.loads(body)
+
+    def create_feed(self, slug: str, title: str, *,
+                    description: Optional[str] = None,
+                    link: Optional[str] = None,
+                    author: Optional[str] = None,
+                    image_url: Optional[str] = None,
+                    language: Optional[str] = None,
+                    explicit: Optional[bool] = None) -> Dict[str, Any]:
+        """Create a feed. Returns the parsed {feed} body.
+
+        Required: slug (worker enforces ^[a-z0-9-]+$) and title. Optional fields
+        are omitted from the payload when None (the worker applies its own
+        defaults, e.g. language=en). A 409 (slug already exists) surfaces as a
+        ControlPlaneError carrying the worker's message.
+        """
+        payload: Dict[str, Any] = {"slug": slug, "title": title}
+        optional = {
+            "description": description,
+            "link": link,
+            "author": author,
+            "image_url": image_url,
+            "language": language,
+            "explicit": explicit,
+        }
+        for key, value in optional.items():
+            if value is not None:
+                payload[key] = value
+        status, body = self._request("POST", "/api/feeds", json_body=payload)
+        if status != 201:
             raise ControlPlaneError(_describe(status, body))
         return json.loads(body)
 
