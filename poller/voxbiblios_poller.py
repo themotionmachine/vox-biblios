@@ -308,9 +308,10 @@ def synthesize(cfg: Config, item: dict[str, Any], tmp_dir: Path) -> list[dict[st
             # The scraped title already carries any '… Part k of N' suffix.
             title = ep.get("title")
         else:
-            # Text/stdin synthesis titles itself 'stdin'; prefer the submitter's
-            # title, re-applying the part suffix when the CLI split the text.
-            base = item.get("title") or ep.get("title")
+            # Text/stdin synthesis titles itself 'stdin', so never borrow the CLI
+            # title here — use the submitter's title, or None to let the worker
+            # fall back to 'Episode <id>'. Re-apply the part suffix on splits.
+            base = item.get("title")
             title = (f"{base} — Part {part_no} of {parts_total}"
                      if base and parts_total and parts_total > 1 and part_no else base)
         out.append({"mp3": mp3, "title": title, "description": ep.get("description") or ""})

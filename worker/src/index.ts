@@ -600,12 +600,14 @@ app.post("/api/worker/items/:id/complete", async (c) => {
     }
     // Clear any episodes from a prior partial completion so this is idempotent.
     await deleteEpisodesForItem(c.env.DB, id);
+    const multi = body.parts.length > 1;
     const episodes: Episode[] = [];
     for (const [i, part] of body.parts.entries()) {
+      const fallbackTitle = multi ? `Episode ${id.slice(0, 8)} part ${i + 1}` : `Episode ${id.slice(0, 8)}`;
       const ep = await insertEpisode(c.env.DB, {
         feed_id: item.feed_id,
         guid: `${id}-${i}`,
-        title: pickStr(part.title) ?? item.title?.trim() ?? `Episode ${id.slice(0, 8)} part ${i + 1}`,
+        title: pickStr(part.title) ?? item.title?.trim() ?? fallbackTitle,
         description: pickStr(part.description) ?? fallbackDescription,
         audio_key: part.audio_key as string,
         audio_bytes: typeof part.audio_bytes === "number" && part.audio_bytes > 0 ? part.audio_bytes : 0,

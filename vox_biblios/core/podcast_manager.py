@@ -23,8 +23,10 @@ logger = get_logger(__name__)
 
 # A very long article is split into multiple part-episodes, each synthesized and
 # published separately. The cap is on source characters, chosen so the rendered
-# MP3 stays well under the control plane's ~100 MB per-upload ceiling (empirically
-# ~1 MB of 128 kbps audio per ~950 chars, so 65k chars ≈ ~68 MB — ~1/3 headroom).
+# MP3 stays well under Cloudflare's per-request body limit (~100 MB on Free/Pro
+# plans — the real binding ceiling, distinct from the worker's app-level
+# MAX_AUDIO_BYTES of 300 MB). Empirically ~1 MB of 128 kbps audio per ~950 chars,
+# so 65k chars ≈ ~68 MB — roughly one-third headroom under 100 MB.
 MAX_PART_CHARS = 65_000
 
 

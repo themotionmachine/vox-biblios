@@ -488,7 +488,7 @@ export async function retryQueueItem(db: D1Database, id: string): Promise<boolea
   const row = await db
     .prepare(
       `UPDATE queue_items
-       SET status = 'queued', error = NULL, claimed_at = NULL, updated_at = datetime('now')
+       SET status = 'queued', error = NULL, claimed_at = NULL, attempts = 0, updated_at = datetime('now')
        WHERE id = ? AND status = 'failed' RETURNING id`,
     )
     .bind(id)
