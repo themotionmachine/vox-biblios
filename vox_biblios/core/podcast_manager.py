@@ -21,6 +21,14 @@ from vox_biblios.tts import create_provider, TTSProvider
 
 logger = get_logger(__name__)
 
+# A very long article is split into multiple part-episodes, each synthesized and
+# published separately. The cap is on source characters, chosen so the rendered
+# MP3 stays well under Cloudflare's per-request body limit (~100 MB on Free/Pro
+# plans — the real binding ceiling, distinct from the worker's app-level
+# MAX_AUDIO_BYTES of 300 MB). Empirically ~1 MB of 128 kbps audio per ~950 chars,
+# so 65k chars ≈ ~68 MB — roughly one-third headroom under 100 MB.
+MAX_PART_CHARS = 65_000
+
 
 @dataclass
 class ProcessResult:
@@ -160,6 +168,70 @@ class PodcastManager:
             'pubDate': datetime.now(timezone.utc),
         }
 
+    def _split_text_into_parts(self, text: str) -> List[str]:
+        """Split an article into parts no larger than ``MAX_PART_CHARS`` chars.
+
+        Short articles return a single part (``[text]``) — unchanged behaviour.
+        Longer ones are split on the TTS chunk boundaries (never mid-sentence)
+        and greedily packed so each part stays under the cap.
+        """
+        if len(text) <= MAX_PART_CHARS:
+            return [text]
+
+        # Cap the chunk size at the part size so no single chunk can exceed a part
+        # (some providers allow chunks larger than MAX_PART_CHARS).
+        chunk_size = min(self._tts_provider.max_chunk_chars, MAX_PART_CHARS)
+        chunks = self.text_processor.chunk(text, max_size=chunk_size)
+        if not chunks:
+            return [text]
+
+        parts: List[str] = []
+        current: List[str] = []
+        size = 0
+        for ch in chunks:
+            # +1 accounts for the space joining chunks back together.
+            if current and size + len(ch) + 1 > MAX_PART_CHARS:
+                parts.append(" ".join(current))
+                current, size = [], 0
+            current.append(ch)
+            size += len(ch) + 1
+        if current:
+            parts.append(" ".join(current))
+        return parts
+
+    def _synthesize_into_episodes(self, text: str, base_title: str, source: str):
+        """Synthesize an article into one or more part-episodes.
+
+        Returns ``(episodes, failures)``. A short article yields a single episode
+        with the plain title (unchanged). A long article is split into parts
+        titled ``"<base_title> — Part k of N"``, each its own episode carrying
+        ``part``/``parts`` markers. If *any* part fails, the whole article is
+        reported as a failure (no incomplete/partial publish).
+        """
+        parts = self._split_text_into_parts(text)
+        n = len(parts)
+
+        if n > 1:
+            logger.info(f"Splitting '{base_title}' ({len(text)} chars) into {n} parts")
+
+        episodes: List[Dict[str, Any]] = []
+        for k, part_text in enumerate(parts, start=1):
+            title = base_title if n == 1 else f"{base_title} — Part {k} of {n}"
+            audio_path = self._synthesize_article(part_text, title)
+            if not audio_path:
+                detail = "synthesis failed" if n == 1 else f"synthesis failed on part {k} of {n}"
+                return [], [{'source': source, 'error': detail}]
+            try:
+                episode = self._make_episode(audio_path, title, part_text, source)
+            except Exception as e:
+                logger.error(f"Failed to publish '{source}' part {k}/{n}: {e}")
+                return [], [{'source': source, 'error': str(e)}]
+            episode['part'] = k
+            episode['parts'] = n
+            episodes.append(episode)
+
+        return episodes, []
+
     def process_texts_from_folder(self, folder_path: Union[str, Path]) -> ProcessResult:
         """
         Process all text files in a folder, one episode per file.
@@ -189,20 +261,13 @@ class PodcastManager:
 
             for filename, text in processed_texts.items():
                 title = Path(filename).stem
-                audio_path = self._synthesize_article(text, title)
+                episodes, failures = self._synthesize_into_episodes(text, title, filename)
 
-                if audio_path:
-                    try:
-                        episode = self._make_episode(audio_path, title, text, filename)
-                        result.episodes.append(episode)
-                        succeeded_files.append(filename)
-                        logger.info(f"Successfully processed '{filename}'")
-                        continue
-                    except Exception as e:
-                        logger.error(f"Failed to publish '{filename}': {e}")
-                        result.failures.append({'source': filename, 'error': str(e)})
-                else:
-                    result.failures.append({'source': filename, 'error': 'synthesis failed'})
+                if episodes:
+                    result.episodes.extend(episodes)
+                    succeeded_files.append(filename)
+                    logger.info(f"Successfully processed '{filename}' into {len(episodes)} episode(s)")
+                result.failures.extend(failures)
 
             if succeeded_files:
                 self.text_processor.delete_files(folder_path, succeeded_files)
@@ -251,20 +316,11 @@ class PodcastManager:
             text = self.text_processor.preprocess(content['text'])
 
             result = ProcessResult()
-            audio_path = self._synthesize_article(text, title)
-
-            if audio_path:
-                try:
-                    episode = self._make_episode(audio_path, title, text, url)
-                    result.episodes.append(episode)
-                    logger.info(f"Successfully processed URL '{url}'")
-                    return result
-                except Exception as e:
-                    logger.error(f"Failed to publish episode for '{url}': {e}")
-                    result.failures.append({'source': url, 'error': str(e)})
-            else:
-                result.failures.append({'source': url, 'error': 'synthesis failed'})
-
+            episodes, failures = self._synthesize_into_episodes(text, title, url)
+            result.episodes.extend(episodes)
+            result.failures.extend(failures)
+            if episodes:
+                logger.info(f"Successfully processed URL '{url}' into {len(episodes)} episode(s)")
             return result
 
         except Exception as e:
